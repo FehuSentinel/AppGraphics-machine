@@ -1,0 +1,73 @@
+.app {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #F8F9FA;
+}
+
+.app-header {
+  background: linear-gradient(135deg, #2C3E50 0%, #34495E 100%);
+  color: white;
+  padding: 12px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  border-bottom: 3px solid #3498DB;
+}
+
+.app-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.file-info {
+  font-size: 11px;
+  background-color: rgba(255,255,255,0.15);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.2);
+  font-weight: 500;
+}
+
+.app-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 70% 30%;
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+  overflow: hidden;
+  background-color: #E1E8ED;
+}
+
+.grid-cell {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: white;
+}
+
+.table-cell {
+  grid-column: 1;
+  grid-row: 1;
+  background-color: white;
+}
+
+.graph-cell {
+  grid-column: 1;
+  grid-row: 2;
+  background-color: white;
+  overflow: hidden;
+}
+
+.controls-panel {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  background-color: #E0F7FA;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+
