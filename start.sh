@@ -26,25 +26,39 @@ trap cleanup INT TERM
 echo -e "${BLUE}📦 Configurando Backend...${NC}"
 cd backend
 
+# Verificar si Python está instalado
+if ! command -v python3 &> /dev/null; then
+    echo -e "${YELLOW}❌ Python 3 no está instalado.${NC}"
+    echo "Por favor instala Python 3.8+ desde https://www.python.org/downloads/"
+    exit 1
+fi
+
 # Crear venv si no existe
 if [ ! -d "venv" ]; then
     echo "Creando entorno virtual..."
     python3 -m venv venv || {
-        echo "Error: No se pudo crear el entorno virtual. Instalando python3-venv..."
-        sudo apt-get update && sudo apt-get install -y python3-venv
-        python3 -m venv venv
+        echo -e "${YELLOW}Error: No se pudo crear el entorno virtual.${NC}"
+        echo "Intentando instalar python3-venv..."
+        if command -v sudo &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y python3-venv
+            python3 -m venv venv
+        else
+            echo "Por favor instala python3-venv manualmente"
+            exit 1
+        fi
     }
 fi
 
 # Activar venv
 source venv/bin/activate
 
-# Instalar dependencias
-if ! python -c "import fastapi" 2>/dev/null; then
-    echo "Instalando dependencias de Python..."
-    pip install --upgrade pip > /dev/null 2>&1
-    pip install -r requirements.txt
-fi
+# Actualizar pip
+echo "Actualizando pip..."
+pip install --upgrade pip > /dev/null 2>&1
+
+# Instalar/actualizar dependencias
+echo "Instalando dependencias de Python..."
+pip install -r requirements.txt
 
 # Crear carpeta uploads si no existe
 mkdir -p uploads
@@ -74,9 +88,12 @@ if ! command -v node &> /dev/null; then
     sudo apt-get install -y nodejs
 fi
 
-# Instalar dependencias si no existen
+# Instalar/actualizar dependencias de Node.js
 if [ ! -d "node_modules" ]; then
     echo "Instalando dependencias de Node.js..."
+    npm install
+else
+    echo "Verificando dependencias de Node.js..."
     npm install
 fi
 

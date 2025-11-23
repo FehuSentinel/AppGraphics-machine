@@ -106,7 +106,7 @@ En la misma sección "1️⃣ Selección de Variables":
 
 4. **Opciones Avanzadas** (Opcionales):
    - **Selección automática de características**: Selecciona las mejores features (SelectKBest)
-   - **Eliminar multicolinealidad**: Elimina características altamente correlacionadas (VIF)
+   - **Eliminar multicolinealidad**: Elimina características altamente correlacionadas (correlación > 0.95)
    - **Características polinomiales**: Crea interacciones entre features (solo modelos lineales)
    - **Validación cruzada**: Usa K-Fold para estimación más robusta del rendimiento
 
@@ -382,7 +382,7 @@ Después de entrenar un modelo, aparece automáticamente el panel "🔮 Predicci
 - Útil para usar el modelo entrenado en producción
 
 ### Mejoras Automáticas Avanzadas
-- **Eliminación de multicolinealidad (VIF)**: Elimina características altamente correlacionadas
+- **Eliminación de multicolinealidad**: Elimina características altamente correlacionadas (correlación > 0.95)
 - **Selección automática de características**: Selecciona las mejores features (SelectKBest)
 - **Variables derivadas**: Crea automáticamente nuevas features (multiplicaciones, divisiones, cuadrados, ratios)
 - **Transformaciones logarítmicas**: Aplica log a variables altamente sesgadas
@@ -410,7 +410,7 @@ Después de entrenar un modelo, aparece automáticamente el panel "🔮 Predicci
 - **División Train/Test**: Configurable entre 10% y 50% para test
 - **Edición de datos**: CRUD completo en la tabla antes del entrenamiento
 - **Selección de características**: Opción para selección automática (SelectKBest)
-- **Eliminación de multicolinealidad**: Opción para eliminar features correlacionadas (VIF)
+- **Eliminación de multicolinealidad**: Opción para eliminar features correlacionadas (correlación > 0.95)
 - **Características polinomiales**: Opción para crear interacciones (solo modelos lineales)
 - **Validación cruzada**: Opción para usar K-Fold cross-validation
 

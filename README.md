@@ -48,9 +48,9 @@ Antes de instalar, asegúrate de tener instalado:
 
 ## 🚀 Inicio Rápido
 
-Una vez instalado, puedes iniciar la aplicación de dos formas:
+### Script Automático (Recomendado) ⭐
 
-### Opción 1: Script Automático (Recomendado)
+Los scripts **automatizan completamente** la instalación y configuración:
 
 **Linux / Mac:**
 ```bash
@@ -63,7 +63,20 @@ start.bat
 ```
 O hacer doble clic en `start.bat`
 
+#### ¿Qué hace el script automáticamente?
+
+✅ **Verifica requisitos previos** (Python, Node.js)  
+✅ **Crea entorno virtual** si no existe  
+✅ **Instala/actualiza dependencias** de Python automáticamente  
+✅ **Instala/actualiza dependencias** de Node.js automáticamente  
+✅ **Crea carpetas necesarias** (uploads)  
+✅ **Inicia backend y frontend** automáticamente  
+
+**Nota**: En Linux/Mac, si Node.js no está instalado, el script intentará instalarlo automáticamente. En Windows, debes instalarlo manualmente desde [nodejs.org](https://nodejs.org/).
+
 ### Opción 2: Inicio Manual
+
+Si prefieres control manual:
 
 **Terminal 1 - Backend:**
 ```bash
@@ -158,7 +171,7 @@ AppTablas/
   - Cross-Validation (opcional)
   - Feature Importance (para modelos basados en árboles)
 - ✅ **Mejoras automáticas aplicadas**:
-  - Eliminación de multicolinealidad (VIF)
+  - Eliminación de multicolinealidad (correlación > 0.95)
   - Selección automática de características (SelectKBest)
   - Variables derivadas (multiplicaciones, divisiones, cuadrados, ratios)
   - Transformaciones logarítmicas (para variables sesgadas)
@@ -225,10 +238,10 @@ npm install
 
 ## 🔧 Tecnologías
 
-- **Backend**: FastAPI, pandas, scikit-learn, XGBoost, statsmodels, SQLite
+- **Backend**: FastAPI, pandas, scikit-learn, XGBoost, scipy, SQLite
 - **Frontend**: React, Vite, Recharts, Axios
 - **Base de Datos**: SQLite3 para persistencia de modelos
-- **ML Libraries**: scikit-learn, XGBoost, statsmodels (VIF, Shapiro-Wilk)
+- **ML Libraries**: scikit-learn, XGBoost, scipy (Shapiro-Wilk test)
 
 ## 📝 API Endpoints
 

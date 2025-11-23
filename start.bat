@@ -10,13 +10,23 @@ REM ========== BACKEND ==========
 echo 📦 Configurando Backend...
 cd backend
 
+REM Verificar si Python está instalado
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo ❌ Python no está instalado.
+    echo Por favor instala Python 3.8+ desde https://www.python.org/downloads/
+    echo Asegúrate de marcar "Add Python to PATH" durante la instalación.
+    pause
+    exit /b 1
+)
+
 REM Crear venv si no existe
 if not exist "venv" (
     echo Creando entorno virtual...
     python -m venv venv
     if errorlevel 1 (
         echo Error: No se pudo crear el entorno virtual.
-        echo Asegúrate de tener Python instalado.
+        echo Asegúrate de tener Python instalado correctamente.
         pause
         exit /b 1
     )
@@ -25,17 +35,17 @@ if not exist "venv" (
 REM Activar venv
 call venv\Scripts\activate.bat
 
-REM Instalar dependencias
-python -c "import fastapi" >nul 2>&1
+REM Actualizar pip
+echo Actualizando pip...
+python -m pip install --upgrade pip >nul 2>&1
+
+REM Instalar/actualizar dependencias
+echo Instalando dependencias de Python...
+pip install -r requirements.txt
 if errorlevel 1 (
-    echo Instalando dependencias de Python...
-    python -m pip install --upgrade pip >nul 2>&1
-    pip install -r requirements.txt
-    if errorlevel 1 (
-        echo Error al instalar dependencias.
-        pause
-        exit /b 1
-    )
+    echo Error al instalar dependencias.
+    pause
+    exit /b 1
 )
 
 REM Crear carpeta uploads si no existe
@@ -62,15 +72,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Instalar dependencias si no existen
+REM Instalar/actualizar dependencias de Node.js
 if not exist "node_modules" (
     echo Instalando dependencias de Node.js...
-    call npm install
-    if errorlevel 1 (
-        echo Error al instalar dependencias de Node.js.
-        pause
-        exit /b 1
-    )
+) else (
+    echo Verificando dependencias de Node.js...
+)
+call npm install
+if errorlevel 1 (
+    echo Error al instalar dependencias de Node.js.
+    pause
+    exit /b 1
 )
 
 REM Iniciar frontend
