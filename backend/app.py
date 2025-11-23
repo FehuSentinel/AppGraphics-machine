@@ -5,7 +5,7 @@ Backend API para Gestión de Tablas con Machine Learning
 FastAPI + SQLite
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -563,18 +563,30 @@ async def upload_excel(file: UploadFile = File(...), sheet_name: Optional[str] =
 
 
 @app.get("/api/data/{session_id}")
-def get_data(session_id: str, limit: int = 1000):
-    """Obtiene los datos de una sesión"""
+def get_data(session_id: str, limit: int = 10000):
+    """Obtiene los datos de una sesión (por defecto hasta 10000 registros para asegurar que los gráficos vean todos los datos)"""
     if session_id not in current_data_store:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     
     df = current_data_store[session_id]
     
+    # IMPORTANTE: Devolver TODOS los datos para que los gráficos muestren lo mismo que se usa para entrenar
+    # Si hay más de 10000 registros, devolver todos pero con advertencia
+    if len(df) > limit:
+        print(f"⚠️ Advertencia: Hay {len(df)} registros, devolviendo primeros {limit}")
+        data_to_return = df.head(limit)
+    else:
+        data_to_return = df
+    
+    print(f"📊 Devolviendo {len(data_to_return)} registros de {len(df)} totales para visualización")
+    
     return {
-        "rows": len(df),
+        "rows": len(df),  # Total de filas en el backend
         "columns": len(df.columns),
         "columns_list": df.columns.tolist(),
-        "data": df.head(limit).to_dict(orient='records')
+        "data": data_to_return.to_dict(orient='records'),  # Todos los datos (hasta el límite)
+        "total_rows": len(df),  # Total real
+        "returned_rows": len(data_to_return)  # Filas devueltas
     }
 
 
@@ -745,20 +757,51 @@ def get_correlations(session_id: str, target_column: Optional[str] = None):
 
 @app.post("/api/model/train")
 def train_model(request: ModelTrainRequest):
-    """Entrena un modelo de machine learning"""
+    """Entrena un modelo de machine learning usando EXACTAMENTE los mismos datos que se muestran en los gráficos"""
+    print(f"📥 Request recibido: session_id={request.session_id}, target={request.target_column}, features={request.features}, algorithm={request.algorithm}")
+    
     if request.session_id not in current_data_store:
+        print(f"❌ Sesión no encontrada: {request.session_id}")
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     
     df = current_data_store[request.session_id].copy()
+    print(f"✅ Datos cargados: {len(df)} filas, {len(df.columns)} columnas")
+    
+    # IMPORTANTE: Usar TODOS los datos disponibles, no solo una muestra
+    print(f"📊 Entrenando modelo con {len(df)} registros completos")
+    print(f"📋 Columnas disponibles: {df.columns.tolist()}")
+    print(f"🎯 Variable objetivo: {request.target_column}")
+    print(f"🔧 Características seleccionadas: {request.features}")
+    print(f"📋 Columnas disponibles después del preprocesamiento: {df.columns.tolist()}")
     
     try:
         # Validar que las columnas existan
         if not request.features or len(request.features) == 0:
             raise ValueError("Debe seleccionar al menos una característica")
         
+        # Filtrar solo las columnas que realmente existen después del preprocesamiento
+        available_features = [f for f in request.features if f in df.columns]
         missing_features = [f for f in request.features if f not in df.columns]
+        
         if missing_features:
-            raise ValueError(f"Columnas no encontradas: {missing_features}")
+            print(f"⚠️ Advertencia: Algunas columnas no existen después del preprocesamiento: {missing_features}")
+            print(f"📋 Columnas disponibles en el dataset: {df.columns.tolist()}")
+            print(f"✅ Usando solo las columnas disponibles: {available_features}")
+        
+        if len(available_features) == 0:
+            available_cols_str = ", ".join(df.columns.tolist()[:10])  # Mostrar primeras 10
+            if len(df.columns) > 10:
+                available_cols_str += f", ... (total: {len(df.columns)} columnas)"
+            raise ValueError(
+                f"Ninguna de las columnas seleccionadas existe después del preprocesamiento.\n"
+                f"Columnas seleccionadas: {request.features}\n"
+                f"Columnas disponibles: {available_cols_str}\n"
+                f"Nota: El preprocesamiento puede haber creado nuevas columnas derivadas o transformadas."
+            )
+        
+        # Usar solo las columnas disponibles
+        request.features = available_features
+        print(f"✅ Usando {len(available_features)} características válidas: {available_features}")
         
         if not request.target_column:
             raise ValueError("Debe seleccionar una variable objetivo")
@@ -771,8 +814,11 @@ def train_model(request: ModelTrainRequest):
             raise ValueError(f"La variable objetivo '{request.target_column}' no puede estar en las características")
         
         # Preparar datos - asegurar que sean numéricos
+        # IMPORTANTE: Usar EXACTAMENTE las mismas columnas que se muestran en los gráficos
         X = df[request.features].copy()
         y = df[request.target_column].copy()
+        
+        print(f"✅ Datos preparados: X shape = {X.shape}, y shape = {y.shape}")
         
         # Convertir a numérico si es necesario
         for col in X.columns:
@@ -782,13 +828,22 @@ def train_model(request: ModelTrainRequest):
         if not pd.api.types.is_numeric_dtype(y):
             y = pd.to_numeric(y, errors='coerce')
         
-        # Eliminar filas con NaN
+        # Eliminar filas con NaN (EXACTAMENTE como se hace en los gráficos)
         mask = ~(X.isnull().any(axis=1) | y.isnull())
         X = X[mask]
         y = y[mask]
         
+        print(f"🧹 Después de eliminar NaN: {len(X)} registros válidos de {len(df)} totales")
+        
         if len(X) == 0:
             raise ValueError("No hay datos válidos después de la limpieza. Verifique que las columnas seleccionadas contengan valores numéricos válidos.")
+        
+        # Verificar que tenemos suficientes datos
+        if len(X) < 2:
+            raise ValueError(f"Solo hay {len(X)} registros válidos. Se necesitan al menos 2 para entrenar un modelo.")
+        
+        print(f"✅ Datos finales para entrenamiento: {len(X)} registros, {len(X.columns)} características")
+        print(f"📊 Estos son EXACTAMENTE los mismos datos que se muestran en los gráficos del frontend")
         
         # MEJORA 1: Eliminar multicolinealidad (features altamente correlacionadas)
         selected_features_list = []
@@ -994,6 +1049,30 @@ def train_model(request: ModelTrainRequest):
         r2_diff = train_r2 - test_r2
         rmse_diff = test_rmse - train_rmse
         
+        # Calcular cross-validation scores si se solicita
+        cv_scores = None
+        if hasattr(request, 'cross_validation') and request.cross_validation:
+            try:
+                if len(X_train) >= 10:  # Mínimo para cross-validation
+                    cv_scores = cross_val_score(model, X_train, y_train, cv=min(5, len(X_train)//5), scoring='r2')
+                    print(f"✅ Cross-validation completada: R² CV = {np.mean(cv_scores):.4f} (±{np.std(cv_scores):.4f})")
+            except Exception as e:
+                print(f"⚠️ Error en cross-validation: {e}")
+                cv_scores = None
+        
+        # Calcular feature importance para modelos basados en árboles (después de entrenar)
+        feature_importance = {}
+        try:
+            if hasattr(model, 'feature_importances_'):
+                feature_names = X_train.columns.tolist()
+                importances = model.feature_importances_
+                if len(feature_names) == len(importances):
+                    for name, importance in zip(feature_names, importances):
+                        feature_importance[name] = float(importance)
+        except Exception as e:
+            print(f"⚠️ Error calculando feature importance: {e}")
+            feature_importance = {}
+        
         # Calcular residuos para validación de supuestos (solo para regresión lineal)
         residuals_test = y_test - y_test_pred
         residuals_train = y_train - y_train_pred
@@ -1024,17 +1103,27 @@ def train_model(request: ModelTrainRequest):
         model_bytes = pickle.dumps(model)
         nombre_modelo = f"{request.algorithm}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
+        # Guardar scaler y transformadores si existen
+        preprocessing_pipeline = {
+            'scaler': scaler,
+            'polynomial_transformer': polynomial_transformer,
+            'normalize': request.normalize,
+            'use_polynomial_features': request.use_polynomial_features,
+            'selected_features': selected_features_list if selected_features_list else request.features
+        }
+        preprocessing_bytes = pickle.dumps(preprocessing_pipeline) if scaler or polynomial_transformer else None
+        
         cursor.execute("""
             INSERT INTO modelos_ml 
             (nombre_modelo, algoritmo, fecha_creacion, caracteristicas, variable_objetivo,
-             metricas, modelo_serializado, r2_train, r2_test, rmse_train, rmse_test,
+             metricas, modelo_serializado, scaler_serializado, r2_train, r2_test, rmse_train, rmse_test,
              mae_train, mae_test)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             nombre_modelo,
             request.algorithm,
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            json.dumps(request.features),
+            json.dumps(selected_features_list if selected_features_list else request.features),
             request.target_column,
             json.dumps({
                 'train_r2': float(train_r2),
@@ -1051,6 +1140,7 @@ def train_model(request: ModelTrainRequest):
                 'rmse_diff': float(rmse_diff)
             }),
             model_bytes,
+            preprocessing_bytes,
             float(train_r2),
             float(test_r2),
             float(train_rmse),
@@ -1113,7 +1203,15 @@ def train_model(request: ModelTrainRequest):
             },
             "learning_curve": learning_curve_data if learning_curve_data else []
         }
+        
+        print(f"✅ Modelo entrenado exitosamente. Model ID: {model_id}")
+        print(f"📊 Métricas: R² Train={train_r2:.4f}, R² Test={test_r2:.4f}")
+        print(f"📤 Devolviendo respuesta con {len(response_data)} campos")
+        
+        # FastAPI maneja la serialización automáticamente
+        return response_data
     except HTTPException as he:
+        print(f"❌ HTTPException: {he.status_code} - {he.detail}")
         raise he
     except KeyError as e:
         error_msg = f"Columna no encontrada: {str(e)}"
@@ -1170,25 +1268,25 @@ class PredictionRequest(BaseModel):
     features: Dict[str, float]  # Diccionario con valores de features
 
 
-@app.post("/api/model/predict")
-def predict_with_model(request: PredictionRequest):
-    """Hace una predicción usando un modelo entrenado guardado"""
+@app.post("/api/model/predict/batch")
+async def predict_batch_with_model(file: UploadFile = File(...), model_id: int = Form(...)):
+    """Hace predicciones masivas usando un archivo CSV/Excel"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Cargar modelo
+    # Cargar modelo y preprocesamiento
     cursor.execute("""
-        SELECT modelo_serializado, caracteristicas, variable_objetivo, algoritmo
+        SELECT modelo_serializado, scaler_serializado, caracteristicas, variable_objetivo, algoritmo
         FROM modelos_ml 
         WHERE id = ?
-    """, (request.model_id,))
+    """, (model_id,))
     
     result = cursor.fetchone()
     if not result:
         conn.close()
         raise HTTPException(status_code=404, detail="Modelo no encontrado")
     
-    model_bytes, features_json, target_column, algorithm = result
+    model_bytes, preprocessing_bytes, features_json, target_column, algorithm = result
     
     try:
         features_list = json.loads(features_json)
@@ -1198,6 +1296,129 @@ def predict_with_model(request: PredictionRequest):
     # Deserializar modelo
     model = pickle.loads(model_bytes)
     
+    # Deserializar pipeline de preprocesamiento si existe
+    preprocessing_pipeline = None
+    if preprocessing_bytes:
+        try:
+            preprocessing_pipeline = pickle.loads(preprocessing_bytes)
+        except:
+            preprocessing_pipeline = None
+    
+    # Leer archivo
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file.file, encoding='utf-8')
+        elif file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file.file)
+        else:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Formato no soportado. Use CSV o Excel")
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error al leer archivo: {str(e)}")
+    
+    # Validar que tenga las columnas necesarias
+    missing_features = [f for f in features_list if f not in df.columns]
+    if missing_features:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Faltan columnas en el archivo: {missing_features}. Se requieren: {features_list}"
+        )
+    
+    # Preparar datos
+    X_input = df[features_list].copy()
+    
+    # Convertir a numérico
+    for col in X_input.columns:
+        X_input[col] = pd.to_numeric(X_input[col], errors='coerce')
+    
+    # Eliminar filas con NaN
+    mask = ~X_input.isnull().any(axis=1)
+    X_input = X_input[mask]
+    
+    if len(X_input) == 0:
+        conn.close()
+        raise HTTPException(status_code=400, detail="No hay filas válidas después de la limpieza")
+    
+    # Aplicar preprocesamiento si existe
+    if preprocessing_pipeline:
+        if preprocessing_pipeline.get('polynomial_transformer') and preprocessing_pipeline.get('use_polynomial_features'):
+            poly_transformer = preprocessing_pipeline['polynomial_transformer']
+            X_input = poly_transformer.transform(X_input)
+            feature_names = poly_transformer.get_feature_names_out(features_list)
+            X_input = pd.DataFrame(X_input, columns=feature_names)
+        
+        if preprocessing_pipeline.get('scaler') and preprocessing_pipeline.get('normalize'):
+            scaler = preprocessing_pipeline['scaler']
+            X_input = pd.DataFrame(
+                scaler.transform(X_input),
+                columns=X_input.columns
+            )
+    
+    # Hacer predicciones
+    try:
+        predictions = model.predict(X_input)
+        
+        # Agregar predicciones al DataFrame original
+        df_result = df.copy()
+        df_result[f'prediccion_{target_column}'] = None
+        df_result.loc[mask, f'prediccion_{target_column}'] = predictions
+        
+        conn.close()
+        
+        return {
+            "success": True,
+            "total_rows": len(df),
+            "valid_rows": len(X_input),
+            "predictions": df_result.to_dict(orient='records'),
+            "target_column": target_column,
+            "model_algorithm": algorithm
+        }
+    except Exception as e:
+        conn.close()
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error en predicción masiva:\n{error_detail}")
+        raise HTTPException(status_code=400, detail=f"Error al hacer predicciones: {str(e)}")
+
+
+@app.post("/api/model/predict")
+def predict_with_model(request: PredictionRequest):
+    """Hace una predicción usando un modelo entrenado guardado"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Cargar modelo y preprocesamiento
+    cursor.execute("""
+        SELECT modelo_serializado, scaler_serializado, caracteristicas, variable_objetivo, algoritmo
+        FROM modelos_ml 
+        WHERE id = ?
+    """, (request.model_id,))
+    
+    result = cursor.fetchone()
+    if not result:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Modelo no encontrado")
+    
+    model_bytes, preprocessing_bytes, features_json, target_column, algorithm = result
+    
+    try:
+        features_list = json.loads(features_json)
+    except:
+        features_list = []
+    
+    # Deserializar modelo
+    model = pickle.loads(model_bytes)
+    
+    # Deserializar pipeline de preprocesamiento si existe
+    preprocessing_pipeline = None
+    if preprocessing_bytes:
+        try:
+            preprocessing_pipeline = pickle.loads(preprocessing_bytes)
+        except:
+            preprocessing_pipeline = None
+    
     # Preparar datos de entrada
     if len(request.features) != len(features_list):
         conn.close()
@@ -1206,7 +1427,7 @@ def predict_with_model(request: PredictionRequest):
             detail=f"Se esperaban {len(features_list)} features, se recibieron {len(request.features)}"
         )
     
-    # Crear DataFrame con los valores
+    # Crear DataFrame con los valores (solo las features originales)
     input_data = {}
     for feature in features_list:
         if feature not in request.features:
@@ -1218,6 +1439,23 @@ def predict_with_model(request: PredictionRequest):
         input_data[feature] = [request.features[feature]]
     
     X_input = pd.DataFrame(input_data)
+    
+    # Aplicar preprocesamiento si existe (igual que durante el entrenamiento)
+    if preprocessing_pipeline:
+        # Aplicar polynomial features si se usaron
+        if preprocessing_pipeline.get('polynomial_transformer') and preprocessing_pipeline.get('use_polynomial_features'):
+            poly_transformer = preprocessing_pipeline['polynomial_transformer']
+            X_input = poly_transformer.transform(X_input)
+            feature_names = poly_transformer.get_feature_names_out(features_list)
+            X_input = pd.DataFrame(X_input, columns=feature_names)
+        
+        # Aplicar scaler si se usó
+        if preprocessing_pipeline.get('scaler') and preprocessing_pipeline.get('normalize'):
+            scaler = preprocessing_pipeline['scaler']
+            X_input = pd.DataFrame(
+                scaler.transform(X_input),
+                columns=X_input.columns
+            )
     
     # Hacer predicción
     try:
@@ -1233,6 +1471,9 @@ def predict_with_model(request: PredictionRequest):
         }
     except Exception as e:
         conn.close()
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error en predicción:\n{error_detail}")
         raise HTTPException(status_code=400, detail=f"Error al hacer predicción: {str(e)}")
 
 

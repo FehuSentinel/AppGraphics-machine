@@ -16,6 +16,7 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
   
   // Si hay modelo entrenado, mostrar resultados del modelo
   // Si no, mostrar relación entre features seleccionadas y target
+  // IMPORTANTE: Usar EXACTAMENTE los mismos datos que se usan para entrenar
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return []
     
@@ -36,28 +37,34 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
       const firstFeature = features[0]
       
       // Verificar que las columnas existan en los datos
-      if (firstFeature && targetColumn && data[0].hasOwnProperty(firstFeature) && data[0].hasOwnProperty(targetColumn)) {
-        const chartData = data.map(row => {
-          const xVal = row[firstFeature]
-          const yVal = row[targetColumn]
-          
-          // Convertir a número, manejar casos especiales
-          let x = typeof xVal === 'number' ? xVal : parseFloat(xVal)
-          let y = typeof yVal === 'number' ? yVal : parseFloat(yVal)
-          
-          // Si el parseo falla, usar NaN para que el filtro lo elimine
-          if (isNaN(x)) x = NaN
-          if (isNaN(y)) y = NaN
-          
-          return {
-            x: x,
-            y: y,
-            name: `${firstFeature}: ${xVal}, ${targetColumn}: ${yVal}`
-          }
-        }).filter(item => !isNaN(item.x) && !isNaN(item.y) && item.x !== null && item.y !== null)
+      if (firstFeature && targetColumn && data[0] && data[0].hasOwnProperty(firstFeature) && data[0].hasOwnProperty(targetColumn)) {
+        // IMPORTANTE: Filtrar y procesar los datos EXACTAMENTE como lo hace el backend
+        const chartData = data
+          .map(row => {
+            const xVal = row[firstFeature]
+            const yVal = row[targetColumn]
+            
+            // Convertir a número, manejar casos especiales (igual que el backend)
+            let x = typeof xVal === 'number' ? xVal : parseFloat(xVal)
+            let y = typeof yVal === 'number' ? yVal : parseFloat(yVal)
+            
+            // Si el parseo falla, usar NaN para que el filtro lo elimine
+            if (isNaN(x)) x = NaN
+            if (isNaN(y)) y = NaN
+            
+            return {
+              x: x,
+              y: y,
+              name: `${firstFeature}: ${xVal}, ${targetColumn}: ${yVal}`
+            }
+          })
+          .filter(item => !isNaN(item.x) && !isNaN(item.y) && item.x !== null && item.y !== null)
         
         // Solo retornar si hay datos válidos
         if (chartData.length > 0) {
+          console.log(`📊 Gráfico: Mostrando ${chartData.length} puntos válidos de ${data.length} totales`)
+          console.log(`📊 Rango X: [${Math.min(...chartData.map(d => d.x)).toFixed(2)}, ${Math.max(...chartData.map(d => d.x)).toFixed(2)}]`)
+          console.log(`📊 Rango Y: [${Math.min(...chartData.map(d => d.y)).toFixed(2)}, ${Math.max(...chartData.map(d => d.y)).toFixed(2)}]`)
           return chartData
         }
       }
@@ -113,6 +120,27 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
       index: idx
     }))
   }, [modelResults])
+
+  // Datos de predicción actual para mostrar en el gráfico
+  const currentPredictionData = useMemo(() => {
+    if (!mlState?.currentPrediction || !mlState.currentPrediction.inputValues) return null
+    
+    const features = Array.isArray(selectedFeatures) ? selectedFeatures : (selectedFeatures ? [selectedFeatures] : [])
+    if (features.length === 0) return null
+    
+    const firstFeature = features[0]
+    const inputValue = mlState.currentPrediction.inputValues[firstFeature]
+    const predictionValue = mlState.currentPrediction.prediction
+    
+    if (inputValue === undefined || predictionValue === undefined) return null
+    
+    return {
+      x: parseFloat(inputValue),
+      y: parseFloat(predictionValue),
+      name: `Nueva Predicción: ${firstFeature}=${inputValue}, ${mlState.currentPrediction.targetColumn}=${predictionValue.toFixed(2)}`,
+      isPrediction: true
+    }
+  }, [mlState?.currentPrediction, selectedFeatures])
 
   if (chartData.length === 0) {
     const features = selectedFeatures || []
@@ -263,7 +291,37 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
                 />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter dataKey="y" fill="#3498DB" />
+                {/* Mostrar predicción actual si existe */}
+                {currentPredictionData && (
+                  <Scatter 
+                    data={[currentPredictionData]} 
+                    dataKey="y" 
+                    fill="#E74C3C" 
+                    shape={(props) => {
+                      const { cx, cy } = props
+                      return (
+                        <g>
+                          <circle cx={cx} cy={cy} r={8} fill="#E74C3C" stroke="#C0392B" strokeWidth={2} />
+                          <circle cx={cx} cy={cy} r={12} fill="none" stroke="#E74C3C" strokeWidth={2} opacity={0.5} />
+                        </g>
+                      )
+                    }}
+                  />
+                )}
               </ScatterChart>
+              {currentPredictionData && (
+                <div style={{ 
+                  marginTop: '10px', 
+                  padding: '8px', 
+                  background: '#FFEBEE', 
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  textAlign: 'center'
+                }}>
+                  🔴 <strong>Nueva Predicción:</strong> {getXAxisLabel()}={currentPredictionData.x.toFixed(2)}, 
+                  {getYAxisLabel()}={currentPredictionData.y.toFixed(2)}
+                </div>
+              )}
             </ResponsiveContainer>
           )}
           

@@ -59,8 +59,27 @@ export const deleteColumn = async (sessionId, columnName) => {
 }
 
 export const trainModel = async (request) => {
-  const response = await axios.post(`${API_BASE}/model/train`, request)
-  return response.data
+  try {
+    console.log('📤 Enviando request a:', `${API_BASE}/model/train`)
+    console.log('📤 Request data:', request)
+    const response = await axios.post(`${API_BASE}/model/train`, request)
+    console.log('📥 Response status:', response.status)
+    console.log('📥 Response data:', response.data)
+    console.log('📥 Response data type:', typeof response.data)
+    console.log('📥 Response data is null?', response.data === null)
+    
+    if (response.data === null || response.data === undefined) {
+      throw new Error('El servidor devolvió una respuesta vacía (null/undefined)')
+    }
+    
+    return response.data
+  } catch (error) {
+    console.error('❌ Error en trainModel API:', error)
+    console.error('❌ Error response:', error.response)
+    console.error('❌ Error status:', error.response?.status)
+    console.error('❌ Error data:', error.response?.data)
+    throw error
+  }
 }
 
 export const getModels = async () => {
@@ -86,6 +105,16 @@ export const getCorrelations = async (sessionId, targetColumn = null) => {
     ? `${API_BASE}/data/${sessionId}/correlations?target_column=${targetColumn}`
     : `${API_BASE}/data/${sessionId}/correlations`
   const response = await axios.get(url)
+  return response.data
+}
+
+export const predictBatchWithModel = async (modelId, file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('model_id', modelId)
+  const response = await axios.post(`${API_BASE}/model/predict/batch`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
   return response.data
 }
 

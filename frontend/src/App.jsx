@@ -27,6 +27,19 @@ function App() {
     setData(loadedData)
     setColumns(cols)
     setFilename(name)
+    // Resetear estado de ML cuando se carga un nuevo archivo
+    setMlState({
+      targetColumn: '',
+      selectedFeatures: [],
+      algorithm: 'Regresión Lineal Múltiple',
+      graphType: 'scatter',
+      xAxis: '',
+      yAxis: '',
+      modelResults: null,
+      testSize: 0.2,
+      normalizeData: false,
+      showResiduals: false
+    })
   }
 
   const handleDataUpdate = (updatedData) => {

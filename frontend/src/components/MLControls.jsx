@@ -1,101 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { trainModel, getCorrelations, predictWithModel } from '../services/api'
+import PredictionPanel from './PredictionPanel'
 import './MLPanel.css'
-
-// Componente para panel de predicción
-const PredictionPanel = ({ modelId, features, targetColumn }) => {
-  const [inputValues, setInputValues] = useState({})
-  const [prediction, setPrediction] = useState(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    // Inicializar valores de entrada
-    const initialValues = {}
-    features.forEach(feature => {
-      initialValues[feature] = 0
-    })
-    setInputValues(initialValues)
-  }, [features])
-
-  const handlePredict = async () => {
-    setLoading(true)
-    try {
-      const result = await predictWithModel(modelId, inputValues)
-      setPrediction(result)
-    } catch (error) {
-      alert('Error al hacer predicción: ' + (error.response?.data?.detail || error.message))
-      setPrediction(null)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleInputChange = (feature, value) => {
-    setInputValues(prev => ({
-      ...prev,
-      [feature]: parseFloat(value) || 0
-    }))
-  }
-
-  return (
-    <div>
-      <div style={{ marginBottom: '10px' }}>
-        {features.map(feature => (
-          <div key={feature} style={{ marginBottom: '8px' }}>
-            <label style={{ fontSize: '11px', display: 'block', marginBottom: '3px' }}>
-              {feature}:
-            </label>
-            <input
-              type="number"
-              value={inputValues[feature] || 0}
-              onChange={(e) => handleInputChange(feature, e.target.value)}
-              style={{
-                width: '100%',
-                padding: '6px',
-                border: '1px solid #BDC3C7',
-                borderRadius: '4px',
-                fontSize: '11px'
-              }}
-            />
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={handlePredict}
-        disabled={loading}
-        style={{
-          width: '100%',
-          padding: '10px',
-          background: 'linear-gradient(135deg, #27AE60 0%, #229954 100%)',
-          color: 'white',
-          border: 'none',
-          borderRadius: '6px',
-          cursor: loading ? 'not-allowed' : 'pointer',
-          fontWeight: '600',
-          fontSize: '12px'
-        }}
-      >
-        {loading ? '⏳ Prediciendo...' : '🔮 Predecir'}
-      </button>
-      {prediction && (
-        <div style={{
-          marginTop: '10px',
-          padding: '10px',
-          background: '#E8F5E9',
-          borderRadius: '6px',
-          border: '1px solid #27AE60'
-        }}>
-          <p style={{ margin: '0', fontSize: '12px', fontWeight: '600' }}>
-            Predicción de <strong>{targetColumn}</strong>:
-          </p>
-          <p style={{ margin: '5px 0 0 0', fontSize: '18px', fontWeight: 'bold', color: '#27AE60' }}>
-            {prediction.prediction.toFixed(2)}
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
 
 const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
   const [training, setTraining] = useState(false)
@@ -168,6 +74,13 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
 
     setTraining(true)
     try {
+        console.log('🚀 Iniciando entrenamiento...', {
+          session_id: sessionId,
+          algorithm: mlState.algorithm,
+          target_column: mlState.targetColumn,
+          features: features
+        })
+        
         const result = await trainModel({
           session_id: sessionId,
           algorithm: mlState.algorithm,
@@ -181,15 +94,25 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           use_polynomial_features: false  // Features polinomiales (opcional, desactivado por defecto)
         })
       
+      console.log('📥 Respuesta recibida:', result)
+      
+      // Verificar que result no sea null o undefined
+      if (!result || result === null || result === undefined) {
+        throw new Error('El servidor no devolvió una respuesta válida (result es null/undefined)')
+      }
+      
       if (result.success) {
+        console.log('✅ Modelo entrenado exitosamente:', result)
         onMlStateUpdate({ modelResults: result })
         alert('✅ Modelo entrenado exitosamente!')
       } else {
         alert('Error: ' + (result.error || 'Error desconocido'))
       }
     } catch (error) {
-      console.error('Error al entrenar modelo:', error)
+      console.error('❌ Error al entrenar modelo:', error)
       console.error('Error completo:', error.response)
+      console.error('Error status:', error.response?.status)
+      console.error('Error data:', error.response?.data)
       const errorMessage = error.response?.data?.detail || error.response?.data?.message || error.message || 'Error desconocido'
       console.error('Mensaje de error:', errorMessage)
       alert('Error al entrenar modelo: ' + errorMessage)
@@ -616,6 +539,41 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
                   </label>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Panel de Predicción - Se muestra después de entrenar */}
+          {mlState.modelResults && mlState.modelResults.model_id && (
+            <div className="ml-section" style={{ 
+              marginTop: '20px', 
+              border: '2px solid #27AE60', 
+              borderRadius: '8px',
+              padding: '15px',
+              background: 'linear-gradient(135deg, #F8FFF9 0%, #E8F5E9 100%)'
+            }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#27AE60' }}>
+                🔮 Probar Modelo - Hacer Predicción
+              </h3>
+              <p style={{ fontSize: '11px', color: '#666', marginBottom: '15px' }}>
+                Ingresa valores para las características y el modelo predecirá el valor de <strong>{mlState.targetColumn}</strong>
+              </p>
+              <PredictionPanel
+                modelId={mlState.modelResults.model_id}
+                features={mlState.modelResults.selected_features || mlState.selectedFeatures || []}
+                targetColumn={mlState.targetColumn}
+                data={data}
+                correlations={correlations}
+                onPrediction={(prediction, inputValues) => {
+                  // Actualizar el estado para mostrar la predicción en el gráfico
+                  onMlStateUpdate({ 
+                    currentPrediction: {
+                      prediction: prediction.prediction,
+                      inputValues: inputValues,
+                      targetColumn: mlState.targetColumn
+                    }
+                  })
+                }}
+              />
             </div>
           )}
         </div>
