@@ -2,23 +2,88 @@
 
 Aplicación web moderna para gestión de datos y machine learning con backend en FastAPI (Python) y frontend en React.
 
+## 📦 Instalación
+
+### Requisitos Previos
+
+Antes de instalar, asegúrate de tener instalado:
+
+- **Python 3.8 o superior** ([Descargar Python](https://www.python.org/downloads/))
+  - En Windows: Marca la opción "Add Python to PATH" durante la instalación
+- **Node.js 16 o superior** ([Descargar Node.js](https://nodejs.org/))
+- **Git** (opcional, solo si clonas el repositorio)
+
+### Pasos de Instalación
+
+1. **Clonar o descargar el repositorio**
+   ```bash
+   git clone https://github.com/FehuSentinel/AppGraphics-machine.git
+   cd AppGraphics-machine
+   ```
+   O descarga el ZIP y descomprímelo.
+
+2. **Instalar dependencias del Backend**
+   
+   **Linux/Mac:**
+   ```bash
+   cd backend
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+   
+   **Windows:**
+   ```cmd
+   cd backend
+   python -m venv venv
+   venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+3. **Instalar dependencias del Frontend**
+   ```bash
+   cd ../frontend
+   npm install
+   ```
+
 ## 🚀 Inicio Rápido
 
-### Linux / Mac
+Una vez instalado, puedes iniciar la aplicación de dos formas:
+
+### Opción 1: Script Automático (Recomendado)
+
+**Linux / Mac:**
 ```bash
 ./start.sh
 ```
 
-### Windows
+**Windows:**
 ```cmd
 start.bat
 ```
-
 O hacer doble clic en `start.bat`
 
-Esto iniciará automáticamente:
-- **Backend** en http://localhost:8000
-- **Frontend** en http://localhost:3000
+### Opción 2: Inicio Manual
+
+**Terminal 1 - Backend:**
+```bash
+cd backend
+source venv/bin/activate  # Windows: venv\Scripts\activate
+python app.py
+```
+
+**Terminal 2 - Frontend:**
+```bash
+cd frontend
+npm run dev
+```
+
+### Acceso a la Aplicación
+
+Una vez iniciada, la aplicación estará disponible en:
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **Documentación API**: http://localhost:8000/docs
 
 ## 📁 Estructura del Proyecto
 
@@ -123,40 +188,37 @@ AppTablas/
 6. **Visualizar resultados** → Gráfico cambia a "Real vs Predicho" o "Learning Curves"
 7. **Hacer predicciones** → Usar el panel de predicción con nuevos valores
 
-## 🛠️ Instalación Manual
+## 🔧 Comandos Útiles
 
-### Requisitos Previos
-- **Python 3.8+** (con pip)
-- **Node.js 16+** (con npm)
-- **Git** (opcional, para clonar el repositorio)
+### Desarrollo
 
-### Backend
-
-**Linux/Mac:**
+**Reinstalar dependencias del Backend:**
 ```bash
 cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python app.py
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install --upgrade -r requirements.txt
 ```
 
-**Windows:**
-```cmd
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
-```
-
-### Frontend
-
-**Linux/Mac/Windows:**
+**Reinstalar dependencias del Frontend:**
 ```bash
 cd frontend
+rm -rf node_modules  # Windows: rmdir /s node_modules
 npm install
-npm run dev
+```
+
+**Limpiar y reinstalar todo:**
+```bash
+# Backend
+cd backend
+rm -rf venv  # Windows: rmdir /s venv
+python3 -m venv venv  # Windows: python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Frontend
+cd ../frontend
+rm -rf node_modules  # Windows: rmdir /s node_modules
+npm install
 ```
 
 > **Nota**: En Windows, puedes usar `cmd` o PowerShell. Los comandos son los mismos.
