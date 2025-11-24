@@ -1,0 +1,31 @@
+comuna,metros_cuadrados,habitaciones,baños,antiguedad_anios,estacionamientos,precio_clp
+Providencia,68,2,1,18,1,185000000
+Providencia,45,1,1,12,0,138500000
+Providencia,82,3,2,25,1,210000000
+Las Condes,74,2,2,15,1,230000000
+Las Condes,110,3,2,8,2,315000000
+Las Condes,55,1,1,20,1,178000000
+Ñuñoa,60,2,2,10,1,158000000
+Ñuñoa,72,3,2,7,1,192000000
+Ñuñoa,48,1,1,2,0,126000000
+Santiago Centro,35,1,1,5,0,82000000
+Santiago Centro,28,1,1,4,0,68000000
+Santiago Centro,52,2,1,12,0,105000000
+La Florida,68,3,2,6,1,134000000
+La Florida,85,3,2,18,1,148000000
+La Florida,55,2,1,10,1,109000000
+Puente Alto,72,3,2,5,1,108000000
+Puente Alto,90,3,2,3,2,122000000
+Puente Alto,60,2,1,12,0,83000000
+Maipú,80,3,2,8,1,118000000
+Maipú,65,2,1,15,1,99000000
+Maipú,95,4,2,20,2,135500000
+La Reina,110,3,2,25,2,255000000
+La Reina,140,4,3,18,2,340000000
+La Reina,75,2,2,30,1,175000000
+Vitacura,90,2,2,10,1,320000000
+Vitacura,150,4,3,5,2,520000000
+Vitacura,120,3,3,8,2,410000000
+Recoleta,45,1,1,8,0,72000000
+Recoleta,58,2,1,12,0,89000000
+Recoleta,70,2,2,22,1,112000000

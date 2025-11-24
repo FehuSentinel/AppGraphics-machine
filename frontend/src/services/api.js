@@ -87,6 +87,11 @@ export const getModels = async () => {
   return response.data
 }
 
+export const getModelDetails = async (modelId) => {
+  const response = await axios.get(`${API_BASE}/models/${modelId}`)
+  return response.data
+}
+
 export const predictWithModel = async (modelId, features) => {
   const response = await axios.post(`${API_BASE}/model/predict`, {
     model_id: modelId,

@@ -232,18 +232,54 @@ def auto_preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
                     data[col].fillna("Desconocido", inplace=True)
     
     # 2. Tratar outliers (solo numéricas, sin eliminar, solo ajustar)
+    # IMPORTANTE: No aplicar cap de outliers si eliminaría toda la variabilidad
     numeric_cols = data.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
         if data[col].dtype in [np.float64, np.int64]:
+            # Guardar valores originales para comparar
+            original_unique = data[col].nunique()
+            original_std = data[col].std()
+            
             # Método IQR: ajustar valores extremos sin eliminar
             Q1 = data[col].quantile(0.25)
             Q3 = data[col].quantile(0.75)
             IQR = Q3 - Q1
+            
+            # Si IQR es 0 o muy pequeño, no aplicar cap (todos los valores son iguales o casi iguales)
+            if IQR < 1e-10:
+                print(f"⚠️ Columna '{col}': IQR muy pequeño ({IQR:.10f}), no se aplica cap de outliers")
+                continue
+            
             lower_bound = Q1 - 1.5 * IQR
             upper_bound = Q3 + 1.5 * IQR
             
-            # Cap outliers en lugar de eliminarlos
+            # Verificar cuántos valores están fuera del rango
+            values_below = (data[col] < lower_bound).sum()
+            values_above = (data[col] > upper_bound).sum()
+            
+            # Si TODOS los valores están fuera del rango, no aplicar cap (eliminaría toda la variabilidad)
+            if values_below + values_above == len(data[col]):
+                print(f"⚠️ Columna '{col}': Todos los valores están fuera del rango IQR, no se aplica cap para preservar variabilidad")
+                continue
+            
+            # Aplicar cap solo si no eliminará toda la variabilidad
+            data_before_cap = data[col].copy()
             data[col] = data[col].clip(lower=lower_bound, upper=upper_bound)
+            
+            # Verificar si después del cap todos los valores quedan iguales
+            unique_after = data[col].nunique()
+            std_after = data[col].std()
+            
+            if unique_after == 1:
+                # Revertir el cambio si eliminó toda la variabilidad
+                print(f"⚠️ Columna '{col}': El cap de outliers eliminó toda la variabilidad, se revierte el cambio")
+                data[col] = data_before_cap
+            elif std_after < original_std * 0.1:  # Si la desviación estándar se redujo en más del 90%
+                # Revertir si la variabilidad se redujo demasiado
+                print(f"⚠️ Columna '{col}': El cap de outliers redujo demasiado la variabilidad (std: {original_std:.2f} -> {std_after:.2f}), se revierte el cambio")
+                data[col] = data_before_cap
+            elif values_below > 0 or values_above > 0:
+                print(f"✅ Columna '{col}': Ajustados {values_below + values_above} outliers (debajo: {values_below}, arriba: {values_above})")
     
     # 3. Eliminar datos erróneos (inf, -inf)
     data = data.replace([np.inf, -np.inf], np.nan)
@@ -267,11 +303,9 @@ def auto_preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
         data[col] = le.fit_transform(data[col].astype(str))
         label_encoders[col] = le
     
-    # 5. Crear variables derivadas automáticamente (feature engineering)
-    data = create_derived_variables(data)
-    
-    # 6. Aplicar transformaciones logarítmicas a variables sesgadas
-    data = apply_log_transformations(data)
+    # NOTA: Variables derivadas y transformaciones log se aplican SOLO si se solicitan explícitamente
+    # durante el entrenamiento, no automáticamente durante la carga de datos
+    # Esto simplifica el flujo y evita problemas con predicciones
     
     return data
 
@@ -820,6 +854,15 @@ def train_model(request: ModelTrainRequest):
         
         print(f"✅ Datos preparados: X shape = {X.shape}, y shape = {y.shape}")
         
+        # DIAGNÓSTICO: Verificar variabilidad ANTES de cualquier procesamiento
+        print(f"🔍 DIAGNÓSTICO - Variable objetivo ANTES de conversión:")
+        print(f"   Tipo: {y.dtype}")
+        print(f"   Valores únicos: {y.nunique()}")
+        print(f"   Primeros 10 valores: {y.head(10).tolist()}")
+        if y.nunique() > 0:
+            print(f"   Rango: [{y.min()}, {y.max()}]")
+            print(f"   Media: {y.mean():.2f}, Std: {y.std():.2f}")
+        
         # Convertir a numérico si es necesario
         for col in X.columns:
             if not pd.api.types.is_numeric_dtype(X[col]):
@@ -828,12 +871,34 @@ def train_model(request: ModelTrainRequest):
         if not pd.api.types.is_numeric_dtype(y):
             y = pd.to_numeric(y, errors='coerce')
         
+        # DIAGNÓSTICO: Verificar variabilidad DESPUÉS de conversión
+        print(f"🔍 DIAGNÓSTICO - Variable objetivo DESPUÉS de conversión:")
+        print(f"   Tipo: {y.dtype}")
+        print(f"   Valores únicos: {y.nunique()}")
+        print(f"   Primeros 10 valores: {y.head(10).tolist()}")
+        if y.nunique() > 0:
+            print(f"   Rango: [{y.min()}, {y.max()}]")
+            print(f"   Media: {y.mean():.2f}, Std: {y.std():.2f}")
+        
         # Eliminar filas con NaN (EXACTAMENTE como se hace en los gráficos)
         mask = ~(X.isnull().any(axis=1) | y.isnull())
         X = X[mask]
         y = y[mask]
         
         print(f"🧹 Después de eliminar NaN: {len(X)} registros válidos de {len(df)} totales")
+        
+        # DIAGNÓSTICO: Verificar variabilidad DESPUÉS de eliminar NaN
+        print(f"🔍 DIAGNÓSTICO - Variable objetivo DESPUÉS de eliminar NaN:")
+        print(f"   Valores únicos: {y.nunique()}")
+        if y.nunique() > 0:
+            print(f"   Rango: [{y.min()}, {y.max()}]")
+            print(f"   Media: {y.mean():.2f}, Std: {y.std():.2f}")
+            if y.nunique() == 1:
+                print(f"   ❌ PROBLEMA: Todos los valores son iguales: {y.iloc[0]}")
+                print(f"   ❌ Esto puede ser porque:")
+                print(f"      1. Los datos originales no tienen variabilidad")
+                print(f"      2. El preprocesamiento eliminó toda la variabilidad")
+                print(f"      3. La conversión a numérico causó pérdida de información")
         
         if len(X) == 0:
             raise ValueError("No hay datos válidos después de la limpieza. Verifique que las columnas seleccionadas contengan valores numéricos válidos.")
@@ -852,14 +917,69 @@ def train_model(request: ModelTrainRequest):
         
         # MEJORA 2: Feature selection automática (seleccionar mejores features)
         # Nota: Se hace después de eliminar multicolinealidad pero antes del split
-        if request.auto_feature_selection and len(X.columns) > 3:
-            X_selected, selected_features_list = select_best_features(X, y, method='f_regression')
-            if selected_features_list and len(selected_features_list) < len(X.columns):
-                # Aplicar selección a todo X
-                X = X_selected
-                print(f"✅ Feature selection aplicada: {len(selected_features_list)}/{len(X.columns)} features seleccionadas")
+        # IMPORTANTE: Si es Regresión Lineal Simple, solo usar la mejor feature
+        if request.auto_feature_selection:
+            if request.algorithm == "Regresión Lineal Simple" and len(X.columns) > 1:
+                # Para Regresión Lineal Simple, seleccionar SOLO la mejor feature
+                # Pero primero verificar que las features tengan variabilidad
+                print(f"🔍 Verificando variabilidad de features antes de selección...")
+                valid_features = []
+                for col in X.columns:
+                    unique_count = X[col].nunique()
+                    std_val = X[col].std()
+                    print(f"   {col}: unique={unique_count}, std={std_val:.6f}")
+                    if unique_count > 1 and std_val > 1e-10:
+                        valid_features.append(col)
+                    else:
+                        print(f"   ⚠️ {col} tiene poca variabilidad (unique={unique_count}, std={std_val:.6f})")
+                
+                if len(valid_features) == 0:
+                    raise ValueError(
+                        "Ninguna feature tiene variabilidad suficiente. "
+                        "Todas las features tienen valores constantes o casi constantes. "
+                        "Verifica tus datos."
+                    )
+                
+                # Filtrar X a solo features válidas
+                X_valid = X[valid_features]
+                print(f"✅ Features con variabilidad válida: {valid_features}")
+                
+                # Seleccionar la mejor feature de las válidas
+                X_selected, selected_features_list = select_best_features(X_valid, y, k=1, method='f_regression')
+                if selected_features_list and len(selected_features_list) > 0:
+                    X = X_selected
+                    print(f"✅ Feature selection para Regresión Lineal Simple: usando SOLO 1 feature: {selected_features_list[0]}")
+                else:
+                    # Si falla la selección, usar la primera feature válida
+                    selected_features_list = [valid_features[0]]
+                    X = X[[selected_features_list[0]]]
+                    print(f"⚠️ Feature selection falló, usando primera feature válida: {selected_features_list[0]}")
+            elif len(X.columns) > 3:
+                X_selected, selected_features_list = select_best_features(X, y, method='f_regression')
+                if selected_features_list and len(selected_features_list) < len(X.columns):
+                    # Aplicar selección a todo X
+                    X = X_selected
+                    print(f"✅ Feature selection aplicada: {len(selected_features_list)}/{len(X.columns)} features seleccionadas")
+                else:
+                    selected_features_list = X.columns.tolist()
             else:
                 selected_features_list = X.columns.tolist()
+        else:
+            # Si no hay feature selection, usar todas las features
+            selected_features_list = X.columns.tolist()
+        
+        # CRÍTICO: Verificar que la feature seleccionada tenga variabilidad
+        if len(selected_features_list) > 0:
+            for feature in selected_features_list:
+                if feature in X.columns:
+                    unique_count = X[feature].nunique()
+                    std_val = X[feature].std()
+                    if unique_count == 1 or std_val < 1e-10:
+                        raise ValueError(
+                            f"La feature seleccionada '{feature}' no tiene variabilidad suficiente "
+                            f"(unique={unique_count}, std={std_val:.6f}). "
+                            f"Selecciona otra feature o verifica tus datos."
+                        )
         
         # Validar que haya suficientes datos para train/test split
         min_samples = max(2, int(1 / request.test_size) + 1)  # Mínimo para tener al menos 1 muestra en test
@@ -880,28 +1000,77 @@ def train_model(request: ModelTrainRequest):
                 X = pd.DataFrame(X_poly, columns=feature_names, index=X.index)
                 print(f"✅ Polynomial features creadas: {X.shape[1]} features (incluye interacciones)")
         
-        # Normalización si se solicita
+        # Dividir datos PRIMERO (antes de normalización)
+        X_train_temp, X_test_temp, y_train, y_test = train_test_split(
+            X, y, test_size=request.test_size, random_state=request.random_state
+        )
+        
+        # Normalización si se solicita (después del split)
         scaler = None
         if request.normalize:
             scaler = StandardScaler()
-            X_train_temp, X_test_temp, y_train, y_test = train_test_split(
-                X, y, test_size=request.test_size, random_state=request.random_state
-            )
+            # Ajustar el scaler SOLO con los datos de entrenamiento
+            X_train_scaled = scaler.fit_transform(X_train_temp)
             X_train = pd.DataFrame(
-                scaler.fit_transform(X_train_temp),
+                X_train_scaled,
                 columns=X_train_temp.columns,
                 index=X_train_temp.index
             )
+            # Transformar test con los parámetros del train
+            X_test_scaled = scaler.transform(X_test_temp)
             X_test = pd.DataFrame(
-                scaler.transform(X_test_temp),
+                X_test_scaled,
                 columns=X_test_temp.columns,
                 index=X_test_temp.index
             )
+            print(f"✅ Normalización aplicada:")
+            print(f"   mean_ shape: {scaler.mean_.shape}, scale_ shape: {scaler.scale_.shape}")
+            print(f"   mean_ values: {scaler.mean_}")
+            print(f"   scale_ values: {scaler.scale_}")
+            
+            # CRÍTICO: Verificar que scale_ no sea cero o muy pequeño (causaría problemas)
+            if np.any(scaler.scale_ == 0):
+                zero_scale_features = [X_train.columns[i] for i in range(len(scaler.scale_)) if scaler.scale_[i] == 0]
+                print(f"❌ ERROR CRÍTICO: Algunos valores de scale_ son cero!")
+                print(f"❌ Features con scale_=0: {zero_scale_features}")
+                print(f"❌ Esto significa que estas features tienen varianza cero (todos los valores son iguales)")
+                print(f"❌ Estas features no aportan información y causarán problemas en predicción")
+                raise ValueError(
+                    f"Features con varianza cero (todos los valores iguales): {zero_scale_features}. "
+                    f"Estas features no pueden usarse con normalización. SOLUCIÓN: Desactiva la normalización (uncheck 'Normalizar datos') y vuelve a entrenar."
+                )
+            
+            # Verificar que scale_ no sea muy pequeño (puede causar problemas numéricos)
+            min_scale = np.min(scaler.scale_)
+            min_scale_idx = np.argmin(scaler.scale_)
+            min_scale_feature = X_train.columns[min_scale_idx] if min_scale_idx < len(X_train.columns) else "unknown"
+            
+            if min_scale < 1e-6:
+                print(f"❌ ERROR CRÍTICO: Algunos valores de scale_ son muy pequeños (< 1e-6): {min_scale}")
+                print(f"❌ Feature con scale_ más pequeño: {min_scale_feature} (scale_={min_scale:.10f})")
+                print(f"❌ Esto causará que los coeficientes sean cero o casi cero después de la normalización")
+                raise ValueError(
+                    f"La normalización tiene scale_ muy pequeño ({min_scale:.10f}) para la feature '{min_scale_feature}'. "
+                    f"Esto causará que el modelo no aprenda. SOLUCIÓN: Desactiva la normalización (uncheck 'Normalizar datos') y vuelve a entrenar."
+                )
+            
+            # Verificar que después de la normalización, X_train todavía tenga variabilidad
+            for i, col in enumerate(X_train.columns):
+                if i < len(scaler.scale_):
+                    normalized_std = X_train[col].std()
+                    if normalized_std < 1e-6:
+                        print(f"❌ ERROR: Después de la normalización, '{col}' tiene std muy pequeño: {normalized_std:.10f}")
+                        raise ValueError(
+                            f"Después de la normalización, la feature '{col}' tiene varianza casi cero. "
+                            f"SOLUCIÓN: Desactiva la normalización y vuelve a entrenar."
+                        )
         else:
-            # Dividir datos
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=request.test_size, random_state=request.random_state
-            )
+            # Sin normalización, usar los datos directamente
+            X_train = X_train_temp
+            X_test = X_test_temp
+            print(f"✅ Sin normalización: usando datos originales")
+            print(f"   X_train range: [{X_train.min().min():.2f}, {X_train.max().max():.2f}]")
+            print(f"   X_test range: [{X_test.min().min():.2f}, {X_test.max().max():.2f}]")
         
         # Crear modelo con hiperparámetros mejorados
         if request.algorithm == "Regresión Lineal Simple":
@@ -973,46 +1142,237 @@ def train_model(request: ModelTrainRequest):
         if len(X_train) != len(y_train):
             raise ValueError(f"Dimensiones inconsistentes: X_train tiene {len(X_train)} filas pero y_train tiene {len(y_train)}")
         
+        # Validar que X_train tenga al menos una columna
+        if X_train.shape[1] == 0:
+            raise ValueError(f"No hay características válidas para entrenar. X_train tiene {X_train.shape[1]} columnas")
+        
+        # Logging detallado antes de entrenar
+        print(f"📊 Datos finales para entrenamiento:")
+        print(f"   X_train shape: {X_train.shape}")
+        print(f"   y_train shape: {y_train.shape}")
+        print(f"   X_test shape: {X_test.shape}")
+        print(f"   y_test shape: {y_test.shape}")
+        print(f"   Features: {X_train.columns.tolist()}")
+        print(f"   Primeras 3 filas de X_train:")
+        for idx in range(min(3, len(X_train))):
+            print(f"      Fila {idx}: {X_train.iloc[idx].to_dict()}")
+        print(f"   Primeras 3 valores de y_train: {y_train.iloc[:3].tolist()}")
+        
         # MEJORA: Learning curves (calcular error en diferentes tamaños de entrenamiento)
         learning_curve_data = []
         if len(X_train) >= 20:  # Solo si hay suficientes datos
             try:
                 train_sizes = np.linspace(0.1, 1.0, min(10, len(X_train)//10))
+                print(f"📈 Calculando learning curves con {len(train_sizes)} puntos...")
+                
                 for size in train_sizes:
                     n_samples = max(1, int(len(X_train) * size))
-                    X_train_subset = X_train.iloc[:n_samples]
-                    y_train_subset = y_train.iloc[:n_samples]
+                    # Asegurar que no exceda el tamaño de X_train
+                    n_samples = min(n_samples, len(X_train))
                     
-                    # Crear y entrenar modelo temporal
-                    temp_model = type(model)(**model.get_params())
-                    temp_model.fit(X_train_subset, y_train_subset)
+                    # Resetear índices para evitar problemas con iloc
+                    X_train_reset = X_train.reset_index(drop=True)
+                    y_train_reset = y_train.reset_index(drop=True)
                     
-                    # Predecir en train y test
-                    train_pred = temp_model.predict(X_train_subset)
-                    test_pred = temp_model.predict(X_test)
+                    X_train_subset = X_train_reset.iloc[:n_samples]
+                    y_train_subset = y_train_reset.iloc[:n_samples]
                     
-                    train_error = mean_squared_error(y_train_subset, train_pred)
-                    test_error = mean_squared_error(y_test, test_pred)
+                    # Validar que hay suficientes datos
+                    if len(X_train_subset) < 2:
+                        continue
                     
-                    learning_curve_data.append({
-                        "train_size": n_samples,
-                        "train_error": float(np.sqrt(train_error)),
-                        "test_error": float(np.sqrt(test_error))
-                    })
+                    try:
+                        # Crear y entrenar modelo temporal
+                        temp_model = type(model)(**model.get_params())
+                        temp_model.fit(X_train_subset, y_train_subset)
+                        
+                        # Predecir en train y test
+                        train_pred = temp_model.predict(X_train_subset)
+                        test_pred = temp_model.predict(X_test)
+                        
+                        # Calcular errores
+                        train_mse = mean_squared_error(y_train_subset, train_pred)
+                        test_mse = mean_squared_error(y_test, test_pred)
+                        
+                        # Calcular RMSE (raíz del MSE)
+                        train_rmse = np.sqrt(train_mse) if train_mse >= 0 else 0.0
+                        test_rmse = np.sqrt(test_mse) if test_mse >= 0 else 0.0
+                        
+                        # Validar que los valores sean finitos
+                        if not (np.isfinite(train_rmse) and np.isfinite(test_rmse)):
+                            print(f"⚠️ Valores no finitos en learning curve (size={size}): train_rmse={train_rmse}, test_rmse={test_rmse}")
+                            continue
+                        
+                        # Asegurar valores mínimos para evitar problemas de visualización
+                        train_rmse = max(train_rmse, 1e-10) if train_rmse > 0 else 1e-10
+                        test_rmse = max(test_rmse, 1e-10) if test_rmse > 0 else 1e-10
+                        
+                        learning_curve_data.append({
+                            "train_size": int(n_samples),
+                            "train_error": float(train_rmse),
+                            "test_error": float(test_rmse)
+                        })
+                    except Exception as e:
+                        print(f"⚠️ Error en learning curve para size={size}, n_samples={n_samples}: {e}")
+                        continue
+                
+                print(f"✅ Learning curves calculadas: {len(learning_curve_data)} puntos válidos")
+                if len(learning_curve_data) == 0:
+                    print("⚠️ No se pudieron calcular learning curves válidas")
             except Exception as e:
+                import traceback
                 print(f"⚠️ Error calculando learning curves: {e}")
+                print(traceback.format_exc())
                 learning_curve_data = []
         
+        # CRÍTICO: Validar variabilidad ANTES del split (en los datos completos)
+        print(f"🔍 Validando variabilidad de datos ANTES del split...")
+        
+        # Validar X (features) - usar X completo, no X_train
+        for col in X.columns:
+            unique_count = X[col].nunique()
+            std_val = X[col].std()
+            if unique_count == 1:
+                print(f"❌ ERROR: La feature '{col}' tiene todos los valores iguales ({X[col].iloc[0]})")
+                raise ValueError(
+                    f"La feature '{col}' no tiene variabilidad (todos los valores son iguales). "
+                    f"Selecciona otra feature o verifica tus datos."
+                )
+            elif std_val < 1e-10:
+                print(f"❌ ERROR: La feature '{col}' tiene desviación estándar muy pequeña ({std_val:.10f})")
+                raise ValueError(
+                    f"La feature '{col}' tiene varianza casi cero (std={std_val:.10f}). "
+                    f"Esto causará problemas. Selecciona otra feature o desactiva la normalización."
+                )
+            else:
+                print(f"✅ Feature '{col}': unique={unique_count}, std={std_val:.6f}, range=[{X[col].min():.2f}, {X[col].max():.2f}]")
+        
+        # Validar y (target) - usar y completo, no y_train
+        y_unique = y.nunique()
+        y_std = y.std()
+        if y_unique == 1:
+            print(f"❌ ERROR: La variable objetivo tiene todos los valores iguales ({y.iloc[0]})")
+            raise ValueError(
+                "La variable objetivo no tiene variabilidad (todos los valores son iguales). "
+                "No se puede entrenar un modelo predictivo sin variabilidad en el target. "
+                "Verifica que la columna 'precio_clp' tenga diferentes valores."
+            )
+        elif y_std < 1e-10:
+            print(f"❌ ERROR: La variable objetivo tiene desviación estándar muy pequeña ({y_std:.10f})")
+            raise ValueError(
+                "La variable objetivo tiene varianza casi cero. "
+                "No se puede entrenar un modelo predictivo sin variabilidad en el target."
+            )
+        else:
+            print(f"✅ Variable objetivo: unique={y_unique}, std={y_std:.6f}, range=[{y.min():.2f}, {y.max():.2f}]")
+        
         # Entrenar modelo final
+        print(f"🔧 Entrenando modelo {request.algorithm}...")
+        print(f"   X_train shape: {X_train.shape}")
+        print(f"   y_train shape: {y_train.shape}")
+        print(f"   Features: {X_train.columns.tolist()}")
+        
         model.fit(X_train, y_train)
+        print(f"✅ Modelo entrenado exitosamente")
+        
+        # Verificar que el modelo aprendió algo (para regresión lineal)
+        if hasattr(model, 'coef_'):
+            coef = model.coef_
+            print(f"📊 Coeficientes del modelo: {coef}")
+            print(f"📊 Tipo de coeficientes: {type(coef)}, Shape: {coef.shape if hasattr(coef, 'shape') else 'N/A'}")
+            if hasattr(model, 'intercept_'):
+                intercept = model.intercept_
+                print(f"📊 Intercepto: {intercept}")
+                print(f"📊 Tipo de intercepto: {type(intercept)}")
+            
+            # Verificar si todos los coeficientes son cero (problema)
+            # PERO: Si la normalización causó que scale_ sea muy pequeño, los coeficientes pueden parecer cero
+            # cuando en realidad el problema es la normalización
+            if np.allclose(coef, 0, atol=1e-6):
+                print(f"❌ ERROR CRÍTICO: Todos los coeficientes son cero o casi cero! El modelo no aprendió nada.")
+                print(f"❌ Esto causará que todas las predicciones sean iguales al intercepto: {intercept}")
+                print(f"❌ Posibles causas:")
+                print(f"   - Las features no tienen relación con el target")
+                print(f"   - Las features tienen varianza cero (todos los valores iguales)")
+                print(f"   - Problema con la normalización (scale_=0 o muy pequeño)")
+                
+                # Si hay normalización, sugerir desactivarla
+                if request.normalize and scaler is not None:
+                    if hasattr(scaler, 'scale_'):
+                        print(f"❌ Valores de scale_: {scaler.scale_}")
+                        if np.any(scaler.scale_ < 1e-6):
+                            print(f"💡 SOLUCIÓN: Desactiva la normalización y vuelve a entrenar")
+                            raise ValueError(
+                                "El modelo no aprendió nada. La normalización tiene scale_ muy pequeño o cero. "
+                                "SOLUCIÓN: Desactiva la normalización (uncheck 'Normalizar datos') y vuelve a entrenar."
+                            )
+                
+                # Si no hay normalización, el problema es que las features no tienen relación
+                raise ValueError(
+                    "El modelo no aprendió nada (todos los coeficientes son cero). "
+                    "Posibles soluciones:\n"
+                    "1. Verifica que las features tengan variabilidad (no todos los valores iguales)\n"
+                    "2. Verifica que las features tengan relación con el target\n"
+                    "3. Prueba con otras features\n"
+                    "4. Si usas normalización, desactívala y vuelve a entrenar"
+                )
+            
+            # Para Regresión Lineal Simple, verificar que el coeficiente no sea cero
+            if request.algorithm == "Regresión Lineal Simple":
+                if len(coef.shape) == 1 and len(coef) == 1:
+                    coef_value = coef[0] if isinstance(coef, np.ndarray) else coef
+                    if np.abs(coef_value) < 1e-10:
+                        print(f"❌ ERROR CRÍTICO: El coeficiente es casi cero ({coef_value})! El modelo no aprenderá de la feature.")
+                        print(f"❌ Esto significa que la feature '{X_train.columns[0]}' no tiene relación con el target")
+                        raise ValueError(
+                            f"El coeficiente es cero. La feature '{X_train.columns[0]}' no tiene relación con el target '{request.target_column}'. "
+                            f"Prueba con otra feature o verifica los datos."
+                        )
+                    else:
+                        print(f"✅ Coeficiente válido: {coef_value:.6f}, Intercepto: {intercept:.6f}")
+                        print(f"✅ Fórmula del modelo: y = {intercept:.6f} + {coef_value:.6f} * {X_train.columns[0]}")
+                        
+                        # Probar la fórmula con un valor de ejemplo
+                        example_x = X_train.iloc[0, 0]
+                        example_y_pred = intercept + coef_value * example_x
+                        example_y_real = y_train.iloc[0]
+                        print(f"✅ Verificación: Para X={example_x:.2f}, predicción manual={example_y_pred:.2f}, valor real={example_y_real:.2f}")
         
         # Predecir
         y_train_pred = model.predict(X_train)
         y_test_pred = model.predict(X_test)
         
+        print(f"✅ Predicciones realizadas:")
+        print(f"   y_train_pred: {y_train_pred[:5]}... (primeros 5)")
+        print(f"   y_test_pred: {y_test_pred[:5]}... (primeros 5)")
+        print(f"   y_train real: {y_train.iloc[:5].tolist()}... (primeros 5)")
+        print(f"   y_test real: {y_test.iloc[:5].tolist()}... (primeros 5)")
+        
+        # CRÍTICO: Verificar que las predicciones NO sean todas iguales
+        if len(np.unique(y_train_pred)) == 1:
+            print(f"❌ ERROR CRÍTICO: Todas las predicciones de entrenamiento son iguales: {y_train_pred[0]}")
+            print(f"❌ Esto indica que el modelo no está aprendiendo de las features")
+            raise ValueError(
+                "El modelo está prediciendo el mismo valor para todos los casos. "
+                "Esto indica que las features no tienen relación con el target o hay un problema con el modelo."
+            )
+        
+        if len(np.unique(y_test_pred)) == 1:
+            print(f"⚠️ ADVERTENCIA: Todas las predicciones de test son iguales: {y_test_pred[0]}")
+            print(f"⚠️ Esto puede indicar un problema con el modelo")
+        
         # Validar que las predicciones tengan el mismo tamaño
         if len(y_test_pred) != len(y_test):
             raise ValueError(f"Error en predicciones: y_test_pred tiene {len(y_test_pred)} valores pero y_test tiene {len(y_test)}")
+        
+        # Verificar que las predicciones tengan sentido (no sean todas NaN o Inf)
+        if np.any(np.isnan(y_train_pred)) or np.any(np.isinf(y_train_pred)):
+            print(f"❌ ERROR: Las predicciones contienen NaN o Inf")
+            raise ValueError("Las predicciones contienen valores inválidos (NaN o Inf)")
+        
+        if np.any(np.isnan(y_test_pred)) or np.any(np.isinf(y_test_pred)):
+            print(f"❌ ERROR: Las predicciones de test contienen NaN o Inf")
+            raise ValueError("Las predicciones de test contienen valores inválidos (NaN o Inf)")
         
         # Métricas (siguiendo el ejemplo de predicciónvalorauto_metricas.py)
         # MSE (Mean Squared Error)
@@ -1100,18 +1460,41 @@ def train_model(request: ModelTrainRequest):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
+        # Serializar modelo y verificar que se guardó correctamente
         model_bytes = pickle.dumps(model)
+        print(f"💾 Modelo serializado: {len(model_bytes)} bytes")
+        
+        # Verificar que el modelo serializado contiene los coeficientes correctos
+        try:
+            model_test = pickle.loads(model_bytes)
+            if hasattr(model_test, 'coef_'):
+                print(f"✅ Verificación: Modelo deserializado tiene coeficientes: {model_test.coef_}")
+                if hasattr(model_test, 'intercept_'):
+                    print(f"✅ Verificación: Intercepto: {model_test.intercept_}")
+        except Exception as e:
+            print(f"⚠️ Error al verificar modelo serializado: {e}")
+        
         nombre_modelo = f"{request.algorithm}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Guardar scaler y transformadores si existen
+        # SIMPLIFICADO: No aplicar transformaciones automáticas complejas
+        # IMPORTANTE: Usar las features finales que realmente se usaron (después de todas las transformaciones)
+        final_features_used = X_train.columns.tolist()
+        print(f"💾 Guardando pipeline de preprocesamiento:")
+        print(f"   Features originales: {request.features}")
+        print(f"   Features finales usadas: {final_features_used}")
+        print(f"   Normalización: {request.normalize}")
+        print(f"   Polynomial features: {request.use_polynomial_features}")
+        
         preprocessing_pipeline = {
             'scaler': scaler,
             'polynomial_transformer': polynomial_transformer,
             'normalize': request.normalize,
             'use_polynomial_features': request.use_polynomial_features,
-            'selected_features': selected_features_list if selected_features_list else request.features
+            'selected_features': final_features_used,  # Features que realmente se usaron
+            'original_features': request.features  # Features originales antes de transformaciones
         }
-        preprocessing_bytes = pickle.dumps(preprocessing_pipeline) if scaler or polynomial_transformer else None
+        preprocessing_bytes = pickle.dumps(preprocessing_pipeline)
         
         cursor.execute("""
             INSERT INTO modelos_ml 
@@ -1123,7 +1506,7 @@ def train_model(request: ModelTrainRequest):
             nombre_modelo,
             request.algorithm,
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            json.dumps(selected_features_list if selected_features_list else request.features),
+            json.dumps(final_features_used),  # Guardar las features finales que realmente se usaron
             request.target_column,
             json.dumps({
                 'train_r2': float(train_r2),
@@ -1181,13 +1564,11 @@ def train_model(request: ModelTrainRequest):
             "model_id": model_id,
             "metrics": response_metrics,
             "feature_importance": feature_importance if feature_importance else {},
-            "selected_features": selected_features_list if selected_features_list else request.features,
+            "selected_features": final_features_used,  # Features que realmente se usaron
             "improvements_applied": {
                 "multicollinearity_removed": request.remove_multicollinearity,
                 "feature_selection": request.auto_feature_selection,
-                "polynomial_features": request.use_polynomial_features,
-                "log_transformations": True,  # Siempre aplicado en preprocesamiento
-                "derived_variables": True  # Siempre aplicado en preprocesamiento
+                "polynomial_features": request.use_polynomial_features
             },
             "predictions": {
                 "y_test": y_test.tolist(),
@@ -1238,19 +1619,32 @@ def get_models():
     
     cursor.execute("""
         SELECT id, nombre_modelo, algoritmo, fecha_creacion, caracteristicas,
-               variable_objetivo, metricas, r2_train, r2_test, rmse_train, rmse_test
+               variable_objetivo, metricas, r2_train, r2_test, rmse_train, rmse_test, scaler_serializado
         FROM modelos_ml
         ORDER BY fecha_creacion DESC
     """)
     
     models = []
     for row in cursor.fetchall():
+        model_id = row[0]
+        preprocessing_bytes = row[11]
+        
+        # Obtener features originales del preprocessing pipeline si existe
+        original_features = None
+        if preprocessing_bytes:
+            try:
+                preprocessing_pipeline = pickle.loads(preprocessing_bytes)
+                original_features = preprocessing_pipeline.get('original_features')
+            except:
+                pass
+        
         models.append({
-            "id": row[0],
+            "id": model_id,
             "nombre_modelo": row[1],
             "algoritmo": row[2],
             "fecha_creacion": row[3],
             "caracteristicas": json.loads(row[4]),
+            "original_features": original_features,  # Features originales antes de transformaciones
             "variable_objetivo": row[5],
             "metricas": json.loads(row[6]),
             "r2_train": row[7],
@@ -1261,6 +1655,50 @@ def get_models():
     
     conn.close()
     return {"models": models}
+
+
+@app.get("/api/models/{model_id}")
+def get_model_details(model_id: int):
+    """Obtiene los detalles de un modelo específico, incluyendo las features originales requeridas"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT modelo_serializado, scaler_serializado, caracteristicas, variable_objetivo, algoritmo
+        FROM modelos_ml 
+        WHERE id = ?
+    """, (model_id,))
+    
+    result = cursor.fetchone()
+    if not result:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Modelo no encontrado")
+    
+    model_bytes, preprocessing_bytes, features_json, target_column, algorithm = result
+    
+    try:
+        features_list = json.loads(features_json)
+    except:
+        features_list = []
+    
+    # Obtener features originales del preprocessing pipeline
+    original_features = features_list
+    if preprocessing_bytes:
+        try:
+            preprocessing_pipeline = pickle.loads(preprocessing_bytes)
+            original_features = preprocessing_pipeline.get('original_features', features_list)
+        except:
+            pass
+    
+    conn.close()
+    
+    return {
+        "model_id": model_id,
+        "algorithm": algorithm,
+        "target_column": target_column,
+        "features": features_list,  # Features finales que usa el modelo
+        "original_features": original_features  # Features originales requeridas para predicción
+    }
 
 
 class PredictionRequest(BaseModel):
@@ -1326,12 +1764,39 @@ async def predict_batch_with_model(file: UploadFile = File(...), model_id: int =
             detail=f"Faltan columnas en el archivo: {missing_features}. Se requieren: {features_list}"
         )
     
-    # Preparar datos
-    X_input = df[features_list].copy()
+    # Preparar datos - usar features originales si están disponibles
+    original_features = preprocessing_pipeline.get('original_features', features_list) if preprocessing_pipeline else features_list
+    
+    # Validar que el archivo tenga las features originales
+    missing_features = [f for f in original_features if f not in df.columns]
+    if missing_features:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Faltan columnas en el archivo: {missing_features}. Se requieren: {original_features}"
+        )
+    
+    X_input = df[original_features].copy()
     
     # Convertir a numérico
     for col in X_input.columns:
         X_input[col] = pd.to_numeric(X_input[col], errors='coerce')
+    
+    # SIMPLIFICADO: Solo aplicar feature selection si se hizo durante el entrenamiento
+    if preprocessing_pipeline:
+        expected_features = preprocessing_pipeline.get('selected_features', features_list)
+        if expected_features and len(expected_features) < len(X_input.columns):
+            print(f"📋 Aplicando feature selection: usando {len(expected_features)} de {len(X_input.columns)} features")
+            missing_features = [f for f in expected_features if f not in X_input.columns]
+            if missing_features:
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Features faltantes: {missing_features}. "
+                           f"Features disponibles: {X_input.columns.tolist()}, Features esperadas: {expected_features}"
+                )
+            X_input = X_input[expected_features]
+            print(f"✅ Feature selection aplicada. Features finales: {X_input.columns.tolist()}")
     
     # Eliminar filas con NaN
     mask = ~X_input.isnull().any(axis=1)
@@ -1341,12 +1806,16 @@ async def predict_batch_with_model(file: UploadFile = File(...), model_id: int =
         conn.close()
         raise HTTPException(status_code=400, detail="No hay filas válidas después de la limpieza")
     
-    # Aplicar preprocesamiento si existe
+    # Aplicar preprocesamiento específico del modelo si existe
     if preprocessing_pipeline:
+        # Obtener las features que realmente usa el modelo
+        model_features = preprocessing_pipeline.get('selected_features', features_list)
+        
         if preprocessing_pipeline.get('polynomial_transformer') and preprocessing_pipeline.get('use_polynomial_features'):
             poly_transformer = preprocessing_pipeline['polynomial_transformer']
             X_input = poly_transformer.transform(X_input)
-            feature_names = poly_transformer.get_feature_names_out(features_list)
+            # IMPORTANTE: Usar model_features (las que realmente usa el modelo)
+            feature_names = poly_transformer.get_feature_names_out(model_features)
             X_input = pd.DataFrame(X_input, columns=feature_names)
         
         if preprocessing_pipeline.get('scaler') and preprocessing_pipeline.get('normalize'):
@@ -1386,6 +1855,8 @@ async def predict_batch_with_model(file: UploadFile = File(...), model_id: int =
 @app.post("/api/model/predict")
 def predict_with_model(request: PredictionRequest):
     """Hace una predicción usando un modelo entrenado guardado"""
+    print(f"📥 Request de predicción recibido: model_id={request.model_id}, features={list(request.features.keys())}")
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -1405,75 +1876,269 @@ def predict_with_model(request: PredictionRequest):
     
     try:
         features_list = json.loads(features_json)
-    except:
+        print(f"✅ Features del modelo: {features_list}")
+    except Exception as e:
+        print(f"⚠️ Error parseando features_json: {e}")
         features_list = []
     
     # Deserializar modelo
-    model = pickle.loads(model_bytes)
+    try:
+        model = pickle.loads(model_bytes)
+        print(f"✅ Modelo deserializado: {algorithm}")
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error al deserializar modelo: {str(e)}")
     
     # Deserializar pipeline de preprocesamiento si existe
     preprocessing_pipeline = None
     if preprocessing_bytes:
         try:
             preprocessing_pipeline = pickle.loads(preprocessing_bytes)
-        except:
+            print(f"✅ Pipeline de preprocesamiento cargado")
+        except Exception as e:
+            print(f"⚠️ Error deserializando pipeline: {e}")
             preprocessing_pipeline = None
     
-    # Preparar datos de entrada
-    if len(request.features) != len(features_list):
+    # SIMPLIFICADO: Usar las features que el modelo realmente espera (después de feature selection)
+    # Si hay feature selection, solo esas features importan
+    expected_features = features_list
+    if preprocessing_pipeline:
+        selected_features = preprocessing_pipeline.get('selected_features')
+        if selected_features and len(selected_features) > 0:
+            expected_features = selected_features
+            print(f"📋 Modelo usa feature selection: {len(selected_features)} features")
+        else:
+            print(f"📋 Modelo usa todas las features: {len(features_list)} features")
+    
+    print(f"📋 Features esperadas por el modelo: {expected_features}")
+    print(f"📋 Features recibidas: {list(request.features.keys())}")
+    print(f"📋 Algoritmo del modelo: {algorithm}")
+    
+    # ADVERTENCIA: Si es Regresión Lineal Simple, solo usa UNA feature
+    if algorithm == "Regresión Lineal Simple" and len(expected_features) > 1:
+        print(f"⚠️ ADVERTENCIA: Regresión Lineal Simple solo debería usar 1 feature, pero se recibieron {len(expected_features)}")
+        print(f"⚠️ El modelo probablemente solo usa la primera feature: {expected_features[0]}")
+    
+    # Validar que se recibieron las features correctas
+    if len(request.features) != len(expected_features):
         conn.close()
         raise HTTPException(
             status_code=400, 
-            detail=f"Se esperaban {len(features_list)} features, se recibieron {len(request.features)}"
+            detail=f"Se esperaban {len(expected_features)} features, se recibieron {len(request.features)}. "
+                   f"Esperadas: {expected_features}, Recibidas: {list(request.features.keys())}"
         )
     
-    # Crear DataFrame con los valores (solo las features originales)
+    # Crear DataFrame con los valores en el orden correcto
     input_data = {}
-    for feature in features_list:
+    for feature in expected_features:
         if feature not in request.features:
             conn.close()
             raise HTTPException(
                 status_code=400, 
-                detail=f"Feature faltante: {feature}"
+                detail=f"Feature faltante: {feature}. Features requeridas: {expected_features}, Features recibidas: {list(request.features.keys())}"
             )
         input_data[feature] = [request.features[feature]]
     
-    X_input = pd.DataFrame(input_data)
+    # Crear DataFrame con el orden correcto de las columnas
+    X_input = pd.DataFrame(input_data, columns=expected_features)
+    print(f"✅ DataFrame creado con {X_input.shape[0]} fila(s) y {X_input.shape[1]} columna(s)")
+    print(f"📊 VALORES DE ENTRADA (ANTES de cualquier transformación):")
+    for col in X_input.columns:
+        print(f"   {col}: {X_input[col].iloc[0]} (tipo: {type(X_input[col].iloc[0])})")
     
-    # Aplicar preprocesamiento si existe (igual que durante el entrenamiento)
+    # SIMPLIFICADO: X_input ya tiene las features correctas (se validaron arriba)
+    # No necesitamos aplicar feature selection de nuevo porque ya filtramos arriba
+    
+    # Aplicar preprocesamiento específico del modelo si existe (igual que durante el entrenamiento)
+    # IMPORTANTE: Aplicar en el mismo orden que durante el entrenamiento
     if preprocessing_pipeline:
-        # Aplicar polynomial features si se usaron
+        # 1. Aplicar polynomial features PRIMERO (si se usaron)
         if preprocessing_pipeline.get('polynomial_transformer') and preprocessing_pipeline.get('use_polynomial_features'):
+            print(f"🔄 Aplicando polynomial features...")
             poly_transformer = preprocessing_pipeline['polynomial_transformer']
-            X_input = poly_transformer.transform(X_input)
-            feature_names = poly_transformer.get_feature_names_out(features_list)
-            X_input = pd.DataFrame(X_input, columns=feature_names)
+            X_input_before = X_input.copy()
+            
+            # Verificar que el número de features coincida
+            if X_input.shape[1] != len(expected_features):
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error: El modelo espera {len(expected_features)} features para polynomial, pero se recibieron {X_input.shape[1]}"
+                )
+            
+            X_input_transformed = poly_transformer.transform(X_input)
+            feature_names = poly_transformer.get_feature_names_out(expected_features)
+            X_input = pd.DataFrame(X_input_transformed, columns=feature_names)
+            print(f"📊 Después de polynomial: {X_input.shape[1]} features")
+            print(f"📊 Primeras 5 features: {X_input.columns.tolist()[:5]}")
         
-        # Aplicar scaler si se usó
+        # 2. Aplicar scaler DESPUÉS (si se usó)
         if preprocessing_pipeline.get('scaler') and preprocessing_pipeline.get('normalize'):
+            print(f"🔄 Aplicando scaler (normalización)...")
             scaler = preprocessing_pipeline['scaler']
-            X_input = pd.DataFrame(
-                scaler.transform(X_input),
-                columns=X_input.columns
-            )
+            
+            print(f"📊 VALORES ANTES DE SCALER (TODAS las features):")
+            for col in X_input.columns:
+                print(f"   {col}: {X_input[col].iloc[0]}")
+            
+            # Verificar parámetros del scaler para debugging
+            if hasattr(scaler, 'mean_') and hasattr(scaler, 'scale_'):
+                print(f"📊 Parámetros del scaler:")
+                print(f"   mean_ shape: {scaler.mean_.shape}, scale_ shape: {scaler.scale_.shape}")
+                print(f"   X_input shape: {X_input.shape}")
+                
+                # Verificar que las dimensiones coincidan
+                if len(scaler.mean_) != X_input.shape[1]:
+                    conn.close()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Error: El scaler espera {len(scaler.mean_)} features, pero X_input tiene {X_input.shape[1]} features después de transformaciones"
+                    )
+                
+                for i, col in enumerate(X_input.columns):
+                    if i < len(scaler.mean_) and i < len(scaler.scale_):
+                        mean_val = scaler.mean_[i]
+                        scale_val = scaler.scale_[i]
+                        print(f"   {col}: mean={mean_val:.6f}, scale={scale_val:.6f}")
+            
+            # Aplicar transformación
+            try:
+                X_input_scaled = scaler.transform(X_input)
+                X_input = pd.DataFrame(X_input_scaled, columns=X_input.columns, index=X_input.index)
+            except Exception as e:
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error al aplicar scaler: {str(e)}. X_input shape: {X_input.shape}, Scaler espera: {len(scaler.mean_)} features"
+                )
+            
+            print(f"📊 VALORES DESPUÉS DE SCALER (TODAS las features):")
+            for col in X_input.columns:
+                print(f"   {col}: {X_input[col].iloc[0]:.6f}")
+            
+            # CRÍTICO: Verificar si todos los valores son iguales después del scaler
+            unique_values = X_input.iloc[0].nunique()
+            if unique_values == 1:
+                print(f"❌ ERROR CRÍTICO: Todos los valores después del scaler son iguales: {X_input.iloc[0].iloc[0]}")
+                print(f"❌ Esto causará que la predicción sea siempre la misma!")
+                if hasattr(scaler, 'scale_'):
+                    print(f"❌ Valores de scale_: {scaler.scale_}")
+                    zero_scale_indices = [i for i, s in enumerate(scaler.scale_) if s == 0 or abs(s) < 1e-10]
+                    if zero_scale_indices:
+                        zero_scale_features = [X_input.columns[i] for i in zero_scale_indices]
+                        print(f"❌ Features con scale_=0 o muy pequeño: {zero_scale_features}")
+                        conn.close()
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Error: El scaler tiene scale_=0 para algunas features ({zero_scale_features}). "
+                                   f"Esto significa que estas features tienen varianza cero en los datos de entrenamiento. "
+                                   f"Reentrena el modelo sin normalización o elimina estas features."
+                        )
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail="Error: Todos los valores después del scaler son iguales. Esto causará predicciones constantes. "
+                           "Reentrena el modelo sin normalización o verifica los datos de entrada."
+                )
     
     # Hacer predicción
     try:
-        prediction = model.predict(X_input)[0]
+        print(f"🔮 Haciendo predicción con {X_input.shape[0]} fila(s) y {X_input.shape[1]} feature(s)")
+        print(f"📊 Features finales: {X_input.columns.tolist()}")
+        print(f"📊 VALORES FINALES QUE LLEGAN AL MODELO (TODAS las features):")
+        for col in X_input.columns:
+            print(f"   {col}: {X_input[col].iloc[0]}")
+        
+        # Crear un hash de los valores para verificar si cambian entre predicciones
+        values_tuple = tuple(sorted(X_input.iloc[0].items()))
+        values_hash = hash(str(values_tuple))
+        print(f"📊 Hash de valores (para verificar cambios): {values_hash}")
+        print(f"📊 Valores como tupla: {values_tuple}")
+        
+        # Verificar si el modelo tiene coeficientes (para debugging)
+        if hasattr(model, 'coef_'):
+            coef = model.coef_
+            print(f"📊 Coeficientes del modelo: {coef}")
+            print(f"📊 Tipo de coeficientes: {type(coef)}, Shape: {coef.shape if hasattr(coef, 'shape') else 'N/A'}")
+            if hasattr(model, 'intercept_'):
+                intercept = model.intercept_
+                print(f"📊 Intercepto del modelo: {intercept}")
+                print(f"📊 Tipo de intercepto: {type(intercept)}")
+            
+            # Calcular predicción manualmente para verificar
+            if len(coef.shape) == 1 and len(coef) == X_input.shape[1]:
+                X_values = X_input.iloc[0].values
+                manual_pred = intercept + np.dot(X_values, coef)
+                print(f"📊 Predicción manual (intercept + dot product):")
+                print(f"   intercept: {intercept:.6f}")
+                print(f"   coef: {coef}")
+                print(f"   X_values: {X_values}")
+                print(f"   dot product: {np.dot(X_values, coef):.6f}")
+                print(f"   predicción manual: {manual_pred:.6f}")
+        
+        # Verificar dimensiones antes de predecir
+        if hasattr(model, 'coef_'):
+            if X_input.shape[1] != len(model.coef_):
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error de dimensiones: X_input tiene {X_input.shape[1]} features pero el modelo tiene {len(model.coef_)} coeficientes. "
+                           f"Features de X_input: {X_input.columns.tolist()}"
+                )
+            print(f"✅ Dimensiones correctas: X_input tiene {X_input.shape[1]} features, modelo tiene {len(model.coef_)} coeficientes")
+        
+        # Hacer predicción
+        try:
+            prediction = model.predict(X_input)
+            print(f"📊 Resultado de model.predict: {prediction}")
+            print(f"📊 Tipo: {type(prediction)}, Shape: {prediction.shape if hasattr(prediction, 'shape') else 'N/A'}")
+            
+            if isinstance(prediction, (np.ndarray, list)) and len(prediction) > 0:
+                prediction_value = float(prediction[0])
+            else:
+                prediction_value = float(prediction)
+            
+            # Verificar que la predicción sea válida
+            if np.isnan(prediction_value) or np.isinf(prediction_value):
+                conn.close()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error: La predicción es inválida (NaN o Inf). Revisa los valores de entrada y el modelo."
+                )
+            
+            print(f"✅ Predicción exitosa: {prediction_value:.6f}")
+            print(f"📊 Hash de valores de entrada: {values_hash}")
+            print(f"📊 Si cambias los valores de entrada, este hash debería cambiar")
+            
+        except Exception as e:
+            conn.close()
+            import traceback
+            error_detail = traceback.format_exc()
+            print(f"❌ Error al hacer predicción:\n{error_detail}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al hacer predicción: {str(e)}"
+            )
+        
         conn.close()
+        
+        # Obtener las features realmente usadas por el modelo (después de todo el preprocesamiento)
+        actual_features_used = X_input.columns.tolist()
         
         return {
             "success": True,
-            "prediction": float(prediction),
+            "prediction": prediction_value,
             "target_column": target_column,
-            "features_used": features_list,
+            "features_used": actual_features_used,  # Features realmente usadas por el modelo
             "model_algorithm": algorithm
         }
     except Exception as e:
         conn.close()
         import traceback
         error_detail = traceback.format_exc()
-        print(f"Error en predicción:\n{error_detail}")
+        print(f"❌ Error en predicción:\n{error_detail}")
+        print(f"❌ Shape de X_input: {X_input.shape}")
+        print(f"❌ Columnas de X_input: {X_input.columns.tolist()}")
         raise HTTPException(status_code=400, detail=f"Error al hacer predicción: {str(e)}")
 
 

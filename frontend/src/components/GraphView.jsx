@@ -22,11 +22,28 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
     
     // Si hay modelo entrenado, usar los datos del modelo
     if (modelResults && modelResults.predictions) {
-      return modelResults.predictions.y_test.map((actual, idx) => ({
-        x: actual,
-        y: modelResults.predictions.y_test_pred[idx],
-        name: `Real: ${actual.toFixed(2)}, Predicho: ${modelResults.predictions.y_test_pred[idx].toFixed(2)}`
-      }))
+      const predictions = modelResults.predictions.y_test.map((actual, idx) => {
+        const predicted = modelResults.predictions.y_test_pred[idx]
+        const error = Math.abs(actual - predicted)
+        const errorPercent = actual !== 0 ? ((error / Math.abs(actual)) * 100).toFixed(2) : '0.00'
+        return {
+          x: actual,
+          y: predicted,
+          error: error,
+          errorPercent: errorPercent,
+          name: `Real: ${actual.toFixed(2)}, Predicho: ${predicted.toFixed(2)}, Error: ${error.toFixed(2)} (${errorPercent}%)`
+        }
+      })
+      
+      // Agregar puntos para la línea diagonal perfecta (y=x)
+      const minVal = Math.min(...predictions.map(p => Math.min(p.x, p.y)))
+      const maxVal = Math.max(...predictions.map(p => Math.max(p.x, p.y)))
+      const diagonalLine = [
+        { x: minVal, y: minVal, isDiagonal: true },
+        { x: maxVal, y: maxVal, isDiagonal: true }
+      ]
+      
+      return { predictions, diagonalLine, minVal, maxVal }
     }
     
     // Si hay target y features seleccionadas, mostrar relación automáticamente
@@ -103,11 +120,24 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
     if (!modelResults || !modelResults.learning_curve || modelResults.learning_curve.length === 0) {
       return null
     }
-    return modelResults.learning_curve.map(point => ({
-      train_size: point.train_size,
-      train_error: point.train_error,
-      test_error: point.test_error
-    }))
+    try {
+      const data = modelResults.learning_curve
+        .map(point => {
+          const trainError = parseFloat(point.train_error) || 0
+          const testError = parseFloat(point.test_error) || 0
+          return {
+            train_size: parseInt(point.train_size) || 0,
+            train_error: isFinite(trainError) ? trainError : 0,
+            test_error: isFinite(testError) ? testError : 0
+          }
+        })
+        .filter(point => point.train_size > 0) // Filtrar puntos inválidos
+      
+      return data.length > 0 ? data : null
+    } catch (error) {
+      console.error('Error procesando learning curve data:', error)
+      return null
+    }
   }, [modelResults])
 
   // Datos de residuos para gráfico de validación (debe estar antes de cualquier return condicional)
@@ -142,7 +172,10 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
     }
   }, [mlState?.currentPrediction, selectedFeatures])
 
-  if (chartData.length === 0) {
+  // Verificar si chartData es válido (array o objeto con predictions)
+  const hasValidData = Array.isArray(chartData) ? chartData.length > 0 : (chartData && chartData.predictions && chartData.predictions.length > 0)
+  
+  if (!hasValidData) {
     const features = selectedFeatures || []
     const hasTarget = !!targetColumn
     const hasFeatures = features.length > 0
@@ -167,31 +200,61 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
     )
   }
 
-      return (
-        <div className="graph-container">
+  return (
+    <div className="graph-container">
           {/* Learning Curve si está disponible y no se muestran residuos */}
           {learningCurveData && !mlState?.showResiduals && (
             <div style={{ width: '100%', height: '100%', marginBottom: '20px' }}>
               <h4>📈 Learning Curves (Curvas de Aprendizaje)</h4>
               <ResponsiveContainer key={`learning-curve-${graphKey}`} width="100%" height="80%">
-                <LineChart data={learningCurveData}>
+                <LineChart 
+                  data={learningCurveData}
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="train_size" 
                     name="Tamaño de Entrenamiento"
                     label={{ value: 'Tamaño de Entrenamiento', position: 'insideBottom', offset: -5 }}
+                    type="number"
+                    scale="linear"
+                    allowDecimals={false}
                   />
                   <YAxis 
                     label={{ value: 'RMSE', angle: -90, position: 'insideLeft' }}
+                    type="number"
+                    scale="linear"
+                    domain={['auto', 'auto']}
+                    allowDataOverflow={false}
                   />
-                  <Tooltip />
+                  <Tooltip 
+                    formatter={(value, name) => {
+                      if (typeof value === 'number' && isFinite(value)) {
+                        // Mostrar más decimales si el valor es muy pequeño
+                        if (value < 0.01) {
+                          return [value.toFixed(6), name]
+                        }
+                        return [value.toFixed(4), name]
+                      }
+                      return [value, name]
+                    }}
+                    labelFormatter={(label) => `Tamaño: ${label}`}
+                  />
+                  <Legend 
+                    verticalAlign="top" 
+                    height={36}
+                    wrapperStyle={{ paddingTop: '10px' }}
+                  />
                   <Line 
                     type="monotone" 
                     dataKey="train_error" 
                     stroke="#3498DB" 
                     strokeWidth={2}
                     name="Error Train"
-                    dot={{ r: 4 }}
+                    dot={{ r: 4, fill: '#3498DB' }}
+                    activeDot={{ r: 6 }}
+                    connectNulls={false}
+                    isAnimationActive={true}
                   />
                   <Line 
                     type="monotone" 
@@ -199,7 +262,10 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
                     stroke="#E74C3C" 
                     strokeWidth={2}
                     name="Error Test"
-                    dot={{ r: 4 }}
+                    dot={{ r: 4, fill: '#E74C3C' }}
+                    activeDot={{ r: 6 }}
+                    connectNulls={false}
+                    isAnimationActive={true}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -227,7 +293,15 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
                     name="Residuos"
                     label={{ value: 'Residuos (Real - Predicho)', angle: -90, position: 'insideLeft' }}
                   />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                  <Tooltip 
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name) => {
+                      if (name === 'residual') {
+                        return [value.toFixed(4), 'Residuo']
+                      }
+                      return [value.toFixed(2), name]
+                    }}
+                  />
                   <Scatter dataKey="residual" fill="#3498DB" />
                   <Line 
                     type="linear" 
@@ -246,69 +320,150 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
           ) : (
             <div style={{ width: '100%', height: '100%' }}>
               <h4>Real vs Predicho (Resultados del Modelo)</h4>
-              <ResponsiveContainer key={`${graphKey}-model`} width="100%" height="100%">
-                <ScatterChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="x" 
-                    name="Real" 
-                    label={{ value: 'Valores Reales', position: 'insideBottom', offset: -5 }}
-                  />
-                  <YAxis 
-                    dataKey="y" 
-                    name="Predicho"
-                    label={{ value: 'Valores Predichos', angle: -90, position: 'insideLeft' }}
-                  />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                  <Scatter dataKey="y" fill="#3498DB" />
-                  <Line 
-                    type="monotone" 
-                    dataKey="x" 
-                    stroke="#2C3E50" 
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
+              {chartData && chartData.predictions && (
+                <>
+                  <ResponsiveContainer key={`${graphKey}-model`} width="100%" height="100%">
+                    <ScatterChart data={chartData.predictions}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="x" 
+                        name="Real" 
+                        label={{ value: 'Valores Reales', position: 'insideBottom', offset: -5 }}
+                        domain={['dataMin', 'dataMax']}
+                      />
+                      <YAxis 
+                        dataKey="y" 
+                        name="Predicho"
+                        label={{ value: 'Valores Predichos', angle: -90, position: 'insideLeft' }}
+                        domain={['dataMin', 'dataMax']}
+                      />
+                      <Tooltip 
+                        cursor={{ strokeDasharray: '3 3' }}
+                        formatter={(value, name, props) => {
+                          if (name === 'y') {
+                            return [
+                              `Predicho: ${value.toFixed(2)}`,
+                              `Real: ${props.payload.x.toFixed(2)}`,
+                              `Error: ${props.payload.error.toFixed(2)} (${props.payload.errorPercent}%)`
+                            ]
+                          }
+                          return [value.toFixed(2), name]
+                        }}
+                        labelFormatter={() => ''}
+                      />
+                      <Legend 
+                        verticalAlign="top" 
+                        height={36}
+                        wrapperStyle={{ paddingTop: '10px' }}
+                      />
+                      <Scatter 
+                        name="Predicciones" 
+                        dataKey="y" 
+                        fill="#3498DB" 
+                        fillOpacity={0.6}
+                      />
+                      {/* Línea diagonal perfecta (y=x) */}
+                      <Line 
+                        type="linear" 
+                        dataKey="x" 
+                        stroke="#27AE60" 
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        dot={false}
+                        name="Predicción Perfecta (y=x)"
+                        connectNulls={false}
+                      />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                  {modelResults.metrics && (
+                    <div style={{ 
+                      marginTop: '10px', 
+                      padding: '10px', 
+                      background: '#F8F9FA', 
+                      borderRadius: '4px',
+                      fontSize: '11px'
+                    }}>
+                      <strong>📊 Métricas:</strong> R² Test: {modelResults.metrics.test_r2?.toFixed(4) || 'N/A'} | 
+                      RMSE: {modelResults.metrics.test_rmse?.toFixed(2) || 'N/A'} | 
+                      MAE: {modelResults.metrics.test_mae?.toFixed(2) || 'N/A'}
+                    </div>
+                  )}
+                  <p style={{ fontSize: '11px', color: '#666', marginTop: '5px' }}>
+                    💡 Los puntos cerca de la línea verde (y=x) indican predicciones precisas. 
+                    Si hay muchos puntos alejados, el modelo necesita mejoras.
+                  </p>
+                </>
+              )}
             </div>
           )}
         </>
       ) : (
         <>
           {graphType === 'scatter' && (
-            <ResponsiveContainer key={graphKey} width="100%" height="100%">
-              <ScatterChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="x" 
-                  name={getXAxisLabel()}
-                  label={{ value: getXAxisLabel(), position: 'insideBottom', offset: -5 }}
-                />
-                <YAxis 
-                  dataKey="y" 
-                  name={getYAxisLabel()}
-                  label={{ value: getYAxisLabel(), angle: -90, position: 'insideLeft' }}
-                />
-                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                <Scatter dataKey="y" fill="#3498DB" />
-                {/* Mostrar predicción actual si existe */}
-                {currentPredictionData && (
-                  <Scatter 
-                    data={[currentPredictionData]} 
+            <>
+              <div style={{ marginBottom: '10px', fontSize: '12px', color: '#666' }}>
+                <strong>📊 Visualización:</strong> {getXAxisLabel()} vs {getYAxisLabel()}
+                {Array.isArray(selectedFeatures) && selectedFeatures.length > 1 && (
+                  <span style={{ marginLeft: '10px', fontSize: '11px' }}>
+                    (Mostrando {selectedFeatures[0]}, {selectedFeatures.length - 1} más seleccionadas)
+                  </span>
+                )}
+              </div>
+              <ResponsiveContainer key={graphKey} width="100%" height="100%">
+                <ScatterChart data={chartData} margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="x" 
+                    name={getXAxisLabel()}
+                    label={{ value: getXAxisLabel(), position: 'insideBottom', offset: -5 }}
+                    domain={['dataMin', 'dataMax']}
+                  />
+                  <YAxis 
                     dataKey="y" 
-                    fill="#E74C3C" 
-                    shape={(props) => {
-                      const { cx, cy } = props
-                      return (
-                        <g>
-                          <circle cx={cx} cy={cy} r={8} fill="#E74C3C" stroke="#C0392B" strokeWidth={2} />
-                          <circle cx={cx} cy={cy} r={12} fill="none" stroke="#E74C3C" strokeWidth={2} opacity={0.5} />
-                        </g>
-                      )
+                    name={getYAxisLabel()}
+                    label={{ value: getYAxisLabel(), angle: -90, position: 'insideLeft' }}
+                    domain={['dataMin', 'dataMax']}
+                  />
+                  <Tooltip 
+                    cursor={{ strokeDasharray: '3 3' }}
+                    formatter={(value, name, props) => {
+                      if (props.payload && props.payload.name) {
+                        return [props.payload.name, '']
+                      }
+                      return [value, name]
                     }}
                   />
-                )}
-              </ScatterChart>
+                  <Legend 
+                    verticalAlign="top" 
+                    height={36}
+                    wrapperStyle={{ paddingTop: '10px' }}
+                  />
+                  <Scatter 
+                    name="Datos" 
+                    dataKey="y" 
+                    fill="#3498DB" 
+                    fillOpacity={0.6}
+                  />
+                  {/* Mostrar predicción actual si existe */}
+                  {currentPredictionData && (
+                    <Scatter 
+                      name="Nueva Predicción"
+                      data={[currentPredictionData]} 
+                      dataKey="y" 
+                      fill="#E74C3C" 
+                      shape={(props) => {
+                        const { cx, cy } = props
+                        return (
+                          <g>
+                            <circle cx={cx} cy={cy} r={8} fill="#E74C3C" stroke="#C0392B" strokeWidth={2} />
+                            <circle cx={cx} cy={cy} r={12} fill="none" stroke="#E74C3C" strokeWidth={2} opacity={0.5} />
+                          </g>
+                        )
+                      }}
+                    />
+                  )}
+                </ScatterChart>
+              </ResponsiveContainer>
               {currentPredictionData && (
                 <div style={{ 
                   marginTop: '10px', 
@@ -322,7 +477,21 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
                   {getYAxisLabel()}={currentPredictionData.y.toFixed(2)}
                 </div>
               )}
-            </ResponsiveContainer>
+              {Array.isArray(chartData) && chartData.length > 0 && (
+                <div style={{ 
+                  marginTop: '10px', 
+                  padding: '8px', 
+                  background: '#EBF5FB', 
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  textAlign: 'center'
+                }}>
+                  📊 <strong>Datos mostrados:</strong> {chartData.length} puntos | 
+                  Rango {getXAxisLabel()}: [{Math.min(...chartData.map(d => d.x)).toFixed(2)}, {Math.max(...chartData.map(d => d.x)).toFixed(2)}] | 
+                  Rango {getYAxisLabel()}: [{Math.min(...chartData.map(d => d.y)).toFixed(2)}, {Math.max(...chartData.map(d => d.y)).toFixed(2)}]
+                </div>
+              )}
+            </>
           )}
           
           {graphType === 'line' && (

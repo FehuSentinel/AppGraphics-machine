@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { predictWithModel, predictBatchWithModel } from '../services/api'
+import { predictWithModel, predictBatchWithModel, getModelDetails } from '../services/api'
 
 // Componente para panel de predicción mejorado
 const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, onPrediction }) => {
@@ -12,14 +12,47 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
   const [massPredictionFile, setMassPredictionFile] = useState(null)
   const [massPredictionResults, setMassPredictionResults] = useState(null)
   const [selectedExample, setSelectedExample] = useState(null)
+  const [selectedFeaturesToEdit, setSelectedFeaturesToEdit] = useState(new Set()) // Features seleccionadas para editar
+  const [requiredFeatures, setRequiredFeatures] = useState(features) // Features requeridas por el modelo
+
+  // Obtener features que el modelo realmente usa
+  useEffect(() => {
+    const fetchModelFeatures = async () => {
+      if (modelId) {
+        try {
+          const modelDetails = await getModelDetails(modelId)
+          // CRÍTICO: El modelo solo puede predecir usando las features que realmente usa
+          // Si hay feature selection, solo esas features importan
+          const modelFeatures = modelDetails.features || []
+          
+          console.log('📋 Features que el modelo REALMENTE usa:', modelFeatures)
+          console.log('📋 Features originales (no usadas):', modelDetails.original_features)
+          
+          if (modelFeatures.length === 0) {
+            console.warn('⚠️ No se pudieron obtener las features del modelo, usando features por defecto')
+            setRequiredFeatures(features)
+          } else {
+            // Usar SOLO las features que el modelo realmente usa
+            // Esto asegura que cualquier cambio que haga el usuario tenga efecto
+            setRequiredFeatures(modelFeatures)
+          }
+        } catch (error) {
+          console.error('❌ Error obteniendo detalles del modelo:', error)
+          // Usar features por defecto si falla
+          setRequiredFeatures(features)
+        }
+      }
+    }
+    fetchModelFeatures()
+  }, [modelId, features])
 
   // Calcular estadísticas y ejemplos
   useEffect(() => {
-    if (data && data.length > 0 && features.length > 0) {
+    if (data && data.length > 0 && requiredFeatures.length > 0) {
       const stats = {}
       const examples = []
       
-      features.forEach(feature => {
+      requiredFeatures.forEach(feature => {
         const values = data
           .map(row => parseFloat(row[feature]))
           .filter(val => !isNaN(val))
@@ -45,7 +78,8 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
         if (idx < data.length) {
           const row = data[idx]
           // Verificar que tenga todos los features necesarios
-          const hasAllFeatures = features.every(f => row.hasOwnProperty(f) && !isNaN(parseFloat(row[f])))
+          // Verificar que tenga todas las features necesarias (pueden ser numéricas o categóricas)
+          const hasAllFeatures = requiredFeatures.every(f => row.hasOwnProperty(f))
           if (hasAllFeatures) {
             examples.push(row)
           }
@@ -55,18 +89,10 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
       setStatistics(stats)
       setExampleRows(examples)
       
-      // Inicializar con media
-      const initialValues = {}
-      features.forEach(feature => {
-        if (stats[feature]) {
-          initialValues[feature] = stats[feature].mean.toFixed(2)
-        } else {
-          initialValues[feature] = 0
-        }
-      })
-      setInputValues(initialValues)
+      // No inicializar con valores predefinidos - dejar vacío para que el usuario elija
+      setInputValues({})
     }
-  }, [features, data])
+  }, [requiredFeatures, data])
 
   // Validar si un valor está en rango
   const isValueInRange = (feature, value) => {
@@ -108,35 +134,119 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
   }
 
   const handlePredict = async () => {
-    // Validar que todos los valores estén presentes
-    const missing = features.filter(f => !inputValues[f] || inputValues[f] === '')
+    // Validar que haya al menos un campo seleccionado
+    if (selectedFeaturesToEdit.size === 0) {
+      alert('Por favor selecciona al menos un campo para modificar')
+      return
+    }
+    
+    // Validar que los valores estén presentes para los campos seleccionados
+    const missing = Array.from(selectedFeaturesToEdit).filter(f => !inputValues[f] || inputValues[f] === '')
     if (missing.length > 0) {
       alert(`Por favor complete los valores para: ${missing.join(', ')}`)
       return
     }
 
-    // Convertir a números
-    const numericValues = {}
-    features.forEach(f => {
-      const val = parseFloat(inputValues[f])
-      if (isNaN(val)) {
-        alert(`El valor de ${f} no es un número válido`)
-        return
+    // Construir valores finales: TODOS los campos requeridos deben tener valor
+    // Si el usuario seleccionó un campo, usar su valor. Si no, usar valor inteligente basado en correlaciones
+    const finalValues = {}
+    const modifiedFeatures = []
+    const defaultFeatures = []
+    
+    // Obtener el primer valor modificado para calcular valores inteligentes basados en correlación
+    const firstModifiedFeature = Array.from(selectedFeaturesToEdit).find(f => 
+      inputValues[f] !== undefined && inputValues[f] !== ''
+    )
+    const firstModifiedValue = firstModifiedFeature ? parseFloat(inputValues[firstModifiedFeature]) : null
+    
+    requiredFeatures.forEach(f => {
+      if (selectedFeaturesToEdit.has(f) && inputValues[f] !== undefined && inputValues[f] !== '') {
+        // Usar valor ingresado por el usuario
+        const val = inputValues[f]
+        // Intentar convertir a número si es posible
+        const numVal = parseFloat(val)
+        if (!isNaN(numVal)) {
+          finalValues[f] = numVal
+          modifiedFeatures.push(f)
+        } else {
+          // Mantener como string (para features categóricas)
+          finalValues[f] = val
+          modifiedFeatures.push(f)
+        }
+      } else {
+        // Para campos no seleccionados, usar valor inteligente:
+        // 1. Si hay correlación con la feature modificada, usar valor proporcional
+        // 2. Si no, usar media
+        if (statistics[f]) {
+          let defaultValue = statistics[f].mean
+          
+          // Si hay una feature modificada y hay correlación, ajustar el valor por defecto
+          if (firstModifiedFeature && firstModifiedValue && !isNaN(firstModifiedValue) && correlations) {
+            const corr = correlations[firstModifiedFeature]?.[f] || correlations[f]?.[firstModifiedFeature]
+            if (corr && Math.abs(corr) > 0.3) {
+              // Hay correlación significativa: ajustar el valor por defecto proporcionalmente
+              const meanModified = statistics[firstModifiedFeature]?.mean || firstModifiedValue
+              const ratio = firstModifiedValue / meanModified
+              // Ajustar el valor por defecto proporcionalmente (pero no demasiado extremo)
+              const adjustedValue = statistics[f].mean * (1 + (ratio - 1) * Math.abs(corr) * 0.5)
+              // Mantener dentro de rangos razonables
+              defaultValue = Math.max(
+                statistics[f].min,
+                Math.min(statistics[f].max, adjustedValue)
+              )
+              console.log(`📊 Ajustando ${f} basado en correlación (${corr.toFixed(2)}) con ${firstModifiedFeature}`)
+            }
+          }
+          
+          finalValues[f] = defaultValue
+          defaultFeatures.push(f)
+        } else {
+          // Feature categórica - usar primer valor único disponible
+          const uniqueValues = [...new Set(data.map(row => row[f]).filter(v => v != null && v !== ''))]
+          finalValues[f] = uniqueValues.length > 0 ? uniqueValues[0] : ''
+          defaultFeatures.push(f)
+        }
       }
-      numericValues[f] = val
     })
+    
+    console.log('📊 Valores finales construidos:', finalValues)
+    console.log('📊 Campos MODIFICADOS por usuario:', modifiedFeatures)
+    console.log('📊 Campos con valores por DEFECTO (ajustados inteligentemente):', defaultFeatures)
+    console.log('📊 Valores modificados:', Object.fromEntries(modifiedFeatures.map(f => [f, finalValues[f]])))
+    console.log('📊 Valores por defecto:', Object.fromEntries(defaultFeatures.map(f => [f, finalValues[f]])))
+    
+    // Mostrar resumen visual antes de enviar
+    if (defaultFeatures.length > 0) {
+      const defaultSummary = defaultFeatures.map(f => `${f}=${statistics[f] ? finalValues[f].toFixed(2) : finalValues[f]}`).join(', ')
+      console.log(`ℹ️ Valores por defecto que se usarán: ${defaultSummary}`)
+    }
 
-    if (Object.keys(numericValues).length !== features.length) return
+    if (Object.keys(finalValues).length !== requiredFeatures.length) {
+      alert(`Error: Faltan valores para algunas features. Requeridas: ${requiredFeatures.length}, Obtenidas: ${Object.keys(finalValues).length}`)
+      return
+    }
 
     setLoading(true)
     try {
-      const result = await predictWithModel(modelId, numericValues)
+      console.log('🔮 Enviando predicción:')
+      console.log('   Model ID:', modelId)
+      console.log('   Features requeridas:', requiredFeatures)
+      console.log('   Valores enviados:', finalValues)
+      console.log('   Campos seleccionados:', Array.from(selectedFeaturesToEdit))
+      console.log('   Campos con valores por defecto:', requiredFeatures.filter(f => !selectedFeaturesToEdit.has(f)))
+      
+      const result = await predictWithModel(modelId, finalValues)
+      console.log('✅ Predicción exitosa:', result)
       setPrediction(result)
       if (onPrediction) {
-        onPrediction(result, numericValues)
+        onPrediction(result, finalValues)
       }
     } catch (error) {
-      alert('Error al hacer predicción: ' + (error.response?.data?.detail || error.message))
+      console.error('❌ Error en predicción:', error)
+      console.error('❌ Error response:', error.response)
+      console.error('❌ Error data:', error.response?.data)
+      const errorMessage = error.response?.data?.detail || error.response?.data?.message || error.message
+      alert('Error al hacer predicción: ' + errorMessage)
       setPrediction(null)
     } finally {
       setLoading(false)
@@ -280,6 +390,57 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
             </div>
           )}
 
+          {/* Seleccionar qué campos modificar */}
+          <div style={{ 
+            marginBottom: '15px', 
+            padding: '10px', 
+            background: '#F8F9FA', 
+            borderRadius: '6px',
+            border: '1px solid #DEE2E6'
+          }}>
+            <p style={{ fontSize: '11px', fontWeight: '600', marginBottom: '8px', color: '#2C3E50' }}>
+              🎯 Selecciona los campos que quieres modificar:
+            </p>
+            <p style={{ fontSize: '10px', color: '#666', marginBottom: '8px' }}>
+              Haz clic en los campos que deseas cambiar. Los demás usarán valores por defecto.
+            </p>
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              {requiredFeatures.map(feature => (
+                <button
+                  key={feature}
+                  onClick={() => {
+                    const newSet = new Set(selectedFeaturesToEdit)
+                    if (newSet.has(feature)) {
+                      newSet.delete(feature)
+                    } else {
+                      newSet.add(feature)
+                    }
+                    setSelectedFeaturesToEdit(newSet)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    background: selectedFeaturesToEdit.has(feature) ? '#27AE60' : '#ECF0F1',
+                    color: selectedFeaturesToEdit.has(feature) ? 'white' : '#2C3E50',
+                    border: `2px solid ${selectedFeaturesToEdit.has(feature) ? '#229954' : '#BDC3C7'}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    fontWeight: selectedFeaturesToEdit.has(feature) ? '600' : '400',
+                    transition: 'all 0.2s',
+                    boxShadow: selectedFeaturesToEdit.has(feature) ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  {selectedFeaturesToEdit.has(feature) ? '✓ ' : ''}{feature}
+                </button>
+              ))}
+            </div>
+            {selectedFeaturesToEdit.size === 0 && (
+              <small style={{ fontSize: '10px', color: '#E74C3C', display: 'block', marginTop: '8px', fontWeight: '600' }}>
+                ⚠️ Selecciona al menos un campo para modificar antes de predecir
+              </small>
+            )}
+          </div>
+
           {/* Botón de Sugerencias Inteligentes */}
           {correlations && (
             <div style={{ marginBottom: '15px' }}>
@@ -302,9 +463,14 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
             </div>
           )}
 
-          {/* Inputs de Valores */}
-          <div style={{ marginBottom: '15px' }}>
-            {features.map(feature => {
+          {/* Inputs de Valores - Solo mostrar campos seleccionados */}
+          {selectedFeaturesToEdit.size > 0 && (
+            <div style={{ marginBottom: '15px' }}>
+              <p style={{ fontSize: '11px', fontWeight: '600', marginBottom: '10px', color: '#2C3E50' }}>
+                ✏️ Ingresa los valores para los campos seleccionados:
+              </p>
+              {Array.from(selectedFeaturesToEdit).map(feature => {
+              
               const value = inputValues[feature] || ''
               const numValue = parseFloat(value)
               const inRange = isValueInRange(feature, value)
@@ -349,27 +515,49 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
                       </div>
                     )}
                   </div>
-                  <input
-                    type="number"
-                    step="any"
-                    value={value}
-                    onChange={(e) => handleInputChange(feature, e.target.value)}
-                    placeholder={statistics[feature] ? `Rango: ${statistics[feature].min.toFixed(2)} - ${statistics[feature].max.toFixed(2)}` : 'Ingrese valor'}
+                  {statistics[feature] ? (
+                    // Input numérico
+                    <input
+                      type="number"
+                      step="any"
+                      value={value}
+                      onChange={(e) => handleInputChange(feature, e.target.value)}
+                      placeholder={`Rango: ${statistics[feature].min.toFixed(2)} - ${statistics[feature].max.toFixed(2)}`}
                     style={{
                       width: '100%',
                       padding: '8px',
-                      border: `2px solid ${!value || inRange ? '#BDC3C7' : '#E74C3C'}`,
+                      border: `2px solid ${!value || inRange ? '#BDC3C7' : '#F39C12'}`,
                       borderRadius: '6px',
                       fontSize: '12px',
                       transition: 'border-color 0.3s',
-                      background: !value || inRange ? 'white' : '#FFEBEE'
+                      background: !value || inRange ? 'white' : '#FFF9E6'
                     }}
                     onFocus={(e) => e.target.style.borderColor = '#27AE60'}
-                    onBlur={(e) => e.target.style.borderColor = !value || inRange ? '#BDC3C7' : '#E74C3C'}
-                  />
+                    onBlur={(e) => e.target.style.borderColor = !value || inRange ? '#BDC3C7' : '#F39C12'}
+                    />
+                  ) : (
+                    // Input de texto (para features categóricas)
+                    <input
+                      type="text"
+                      value={value}
+                      onChange={(e) => handleInputChange(feature, e.target.value)}
+                      placeholder="Ingrese valor"
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '2px solid #BDC3C7',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        transition: 'border-color 0.3s',
+                        background: 'white'
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = '#27AE60'}
+                      onBlur={(e) => e.target.style.borderColor = '#BDC3C7'}
+                    />
+                  )}
                   {!inRange && value && (
-                    <small style={{ fontSize: '9px', color: '#E74C3C', display: 'block', marginTop: '3px' }}>
-                      ⚠️ Valor fuera del rango histórico
+                    <small style={{ fontSize: '9px', color: '#F39C12', display: 'block', marginTop: '3px' }}>
+                      💡 Valor fuera del rango de entrenamiento - La predicción puede ser menos confiable
                     </small>
                   )}
                   {statistics[feature] && (
@@ -391,23 +579,137 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
                   )}
                 </div>
               )
-            })}
-          </div>
+              })}
+            </div>
+          )}
+
+          {/* Resumen de valores que se usarán */}
+          {selectedFeaturesToEdit.size > 0 && (
+            <div style={{
+              marginBottom: '15px',
+              padding: '10px',
+              background: '#E8F5E9',
+              borderRadius: '6px',
+              border: '1px solid #81C784',
+              fontSize: '10px'
+            }}>
+              <p style={{ margin: '0 0 8px 0', fontWeight: '600', color: '#2E7D32' }}>
+                📋 Valores que se usarán para la predicción:
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                {/* Valores modificados por el usuario */}
+                {Array.from(selectedFeaturesToEdit).filter(f => inputValues[f] && inputValues[f] !== '').map(f => (
+                  <div key={f} style={{ 
+                    padding: '5px', 
+                    background: '#C8E6C9', 
+                    borderRadius: '4px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <span style={{ fontWeight: '600', color: '#1B5E20' }}>
+                      ✓ {f}:
+                    </span>
+                    <span style={{ color: '#2E7D32', fontWeight: '600' }}>
+                      {inputValues[f]} (modificado)
+                    </span>
+                  </div>
+                ))}
+                {/* Valores por defecto */}
+                {requiredFeatures.filter(f => !selectedFeaturesToEdit.has(f) || !inputValues[f] || inputValues[f] === '').map(f => {
+                  const defaultValue = statistics[f] ? statistics[f].mean : (() => {
+                    const uniqueValues = [...new Set(data.map(row => row[f]).filter(v => v != null && v !== ''))]
+                    return uniqueValues.length > 0 ? uniqueValues[0] : ''
+                  })()
+                  return (
+                    <div key={f} style={{ 
+                      padding: '5px', 
+                      background: '#F1F8E9', 
+                      borderRadius: '4px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      opacity: 0.8
+                    }}>
+                      <span style={{ color: '#558B2F' }}>
+                        ○ {f}:
+                      </span>
+                      <span style={{ color: '#689F38', fontSize: '9px' }}>
+                        {statistics[f] ? defaultValue.toFixed(2) : defaultValue} (por defecto)
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              <small style={{ fontSize: '9px', color: '#558B2F', display: 'block', marginTop: '8px', fontStyle: 'italic' }}>
+                💡 Los valores por defecto se ajustan automáticamente según las correlaciones con los valores modificados
+              </small>
+            </div>
+          )}
+          
+          {/* Resumen de valores (versión antigua - mantener por compatibilidad) */}
+          {selectedFeaturesToEdit.size > 0 && false && (
+            <div style={{
+              marginBottom: '15px',
+              padding: '10px',
+              background: '#FFF9E6',
+              borderRadius: '6px',
+              border: '1px solid #F7DC6F',
+              fontSize: '10px'
+            }}>
+              <p style={{ margin: '0 0 5px 0', fontWeight: '600', color: '#856404' }}>
+                📋 Resumen de valores:
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {requiredFeatures.map(feature => {
+                  const isEditing = selectedFeaturesToEdit.has(feature)
+                  const value = isEditing 
+                    ? (inputValues[feature] || '') 
+                    : (statistics[feature] ? statistics[feature].mean.toFixed(2) : '0.00')
+                  
+                  return (
+                    <div key={feature} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between',
+                      padding: '3px 0',
+                      borderBottom: '1px solid #F7DC6F'
+                    }}>
+                      <span style={{ fontWeight: isEditing ? '600' : '400' }}>
+                        {isEditing ? '✏️' : '📌'} {feature}:
+                      </span>
+                      <span style={{ 
+                        color: isEditing ? '#27AE60' : '#666',
+                        fontWeight: isEditing ? '600' : '400'
+                      }}>
+                        {value} {!isEditing && '(por defecto)'}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={handlePredict}
-            disabled={loading}
+            disabled={loading || selectedFeaturesToEdit.size === 0}
             style={{
               width: '100%',
               padding: '12px',
-              background: loading ? '#95A5A6' : 'linear-gradient(135deg, #27AE60 0%, #229954 100%)',
+              background: (loading || selectedFeaturesToEdit.size === 0) 
+                ? '#95A5A6' 
+                : 'linear-gradient(135deg, #27AE60 0%, #229954 100%)',
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-              cursor: loading ? 'not-allowed' : 'pointer',
+              cursor: (loading || selectedFeaturesToEdit.size === 0) 
+                ? 'not-allowed' 
+                : 'pointer',
               fontWeight: '600',
               fontSize: '13px',
-              boxShadow: loading ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
+              boxShadow: (loading || selectedFeaturesToEdit.size === 0) 
+                ? 'none' 
+                : '0 2px 4px rgba(0,0,0,0.2)',
               transition: 'all 0.3s'
             }}
           >
@@ -439,7 +741,7 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
         <div>
           <p style={{ fontSize: '11px', color: '#666', marginBottom: '10px' }}>
             Carga un archivo CSV o Excel con las mismas columnas que las características del modelo. 
-            El archivo debe tener las columnas: <strong>{features.join(', ')}</strong>
+            El archivo debe tener las columnas: <strong>{requiredFeatures.join(', ')}</strong>
           </p>
           <input
             type="file"

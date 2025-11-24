@@ -14,9 +14,10 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
       if (!mlState.targetColumn) {
         onMlStateUpdate({ targetColumn: columns[columns.length - 1] })
       }
-      // Auto-seleccionar todas las demás como features
-      if (!mlState.selectedFeatures || mlState.selectedFeatures.length === 0) {
-        onMlStateUpdate({ selectedFeatures: columns.slice(0, -1) })
+      // NO auto-seleccionar features - dejar que el usuario las seleccione manualmente
+      // Solo inicializar como array vacío si no existe
+      if (mlState.selectedFeatures === undefined) {
+        onMlStateUpdate({ selectedFeatures: [] })
       }
       // Auto-seleccionar ejes
       if (columns.length >= 2 && !mlState.xAxis) {
@@ -24,6 +25,10 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           xAxis: columns[0],
           yAxis: columns[columns.length - 1]
         })
+      }
+      // Siempre usar Regresión Lineal Simple
+      if (!mlState.algorithm || mlState.algorithm !== "Regresión Lineal Simple") {
+        onMlStateUpdate({ algorithm: "Regresión Lineal Simple" })
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,17 +86,20 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           features: features
         })
         
+        // Siempre usar Regresión Lineal Simple
+        const algorithm = "Regresión Lineal Simple"
+        
         const result = await trainModel({
           session_id: sessionId,
-          algorithm: mlState.algorithm,
+          algorithm: algorithm,
           target_column: mlState.targetColumn,
           features: features,
           test_size: mlState.testSize || 0.2,
           random_state: 42,
           normalize: mlState.normalizeData || false,
-          auto_feature_selection: true,  // Selección automática de mejores features
+          auto_feature_selection: true,  // Selección automática: para Regresión Lineal Simple selecciona SOLO la mejor feature
           remove_multicollinearity: true,  // Eliminar features altamente correlacionadas
-          use_polynomial_features: false  // Features polinomiales (opcional, desactivado por defecto)
+          use_polynomial_features: false  // Features polinomiales desactivadas
         })
       
       console.log('📥 Respuesta recibida:', result)
@@ -283,21 +291,16 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
               <div className="form-group">
                 <label>Algoritmo:</label>
                 <select 
-                  value={mlState.algorithm} 
+                  value={mlState.algorithm || "Regresión Lineal Simple"} 
                   onChange={(e) => onMlStateUpdate({ algorithm: e.target.value })}
                   className="form-select"
+                  disabled
+                  style={{ background: '#f0f0f0', cursor: 'not-allowed' }}
                 >
                   <option value="Regresión Lineal Simple">Regresión Lineal Simple</option>
-                  <option value="Regresión Lineal Múltiple">Regresión Lineal Múltiple</option>
-                  <option value="Ridge Regression">Ridge Regression</option>
-                  <option value="Lasso Regression">Lasso Regression</option>
-                  <option value="Random Forest">Random Forest</option>
-                  <option value="Gradient Boosting">Gradient Boosting</option>
-                  <option value="XGBoost">XGBoost (Recomendado) ⭐</option>
-                  <option value="Decision Tree">Decision Tree</option>
                 </select>
                 <small style={{ color: '#666', fontSize: '10px' }}>
-                  💡 XGBoost suele dar mejores resultados en la mayoría de casos
+                  💡 Usando Regresión Lineal Simple (seleccionará automáticamente la mejor característica)
                 </small>
               </div>
 
@@ -329,8 +332,25 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
               Normalizar datos (StandardScaler)
             </label>
             <small style={{ color: '#666', fontSize: '10px' }}>
-              Escala las características a media 0 y desviación 1
+              Escala las características a media 0 y desviación 1 (recomendado para mejor rendimiento)
             </small>
+          </div>
+          
+          <div style={{ 
+            padding: '10px', 
+            background: '#E8F5E9', 
+            borderRadius: '6px', 
+            marginBottom: '15px',
+            border: '1px solid #81C784'
+          }}>
+            <p style={{ margin: '0', fontSize: '11px', color: '#2E7D32', fontWeight: '600' }}>
+              💡 Información sobre Regresión Lineal Simple:
+            </p>
+            <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px', fontSize: '10px', color: '#558B2F' }}>
+              <li>Selecciona automáticamente la mejor característica de las que seleccionaste</li>
+              <li>Entrena un modelo simple y rápido</li>
+              <li>Ideal para entender la relación entre una característica y la variable objetivo</li>
+            </ul>
           </div>
 
           <button 
