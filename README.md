@@ -94,7 +94,7 @@ npm run dev
 ### Acceso a la Aplicación
 
 Una vez iniciada, la aplicación estará disponible en:
-- **Frontend**: http://localhost:3000
+- **Frontend**: http://localhost:5173 (Vite)
 - **Backend API**: http://localhost:8000
 - **Documentación API**: http://localhost:8000/docs
 
@@ -111,10 +111,13 @@ AppTablas/
 ├── frontend/                 # Aplicación React
 │   ├── src/
 │   │   ├── components/       # Componentes React
-│   │   │   ├── DataTable.jsx  # Tabla editable
-│   │   │   ├── MLControls.jsx # Controles ML
-│   │   │   ├── GraphPanel.jsx # Panel de gráfico
-│   │   │   └── GraphView.jsx  # Visualización
+│   │   │   ├── DataTable.jsx      # Tabla editable
+│   │   │   ├── MLControls.jsx     # Controles ML
+│   │   │   ├── GraphPanel.jsx     # Panel de gráfico
+│   │   │   ├── GraphView.jsx       # Visualización
+│   │   │   ├── PredictionPanel.jsx # Panel de predicción
+│   │   │   ├── ResizablePanels.jsx  # Paneles redimensionables
+│   │   │   └── StatisticsPanel.jsx # Panel de estadísticas
 │   │   ├── services/         # Servicios API
 │   │   └── App.jsx
 │   └── package.json
@@ -145,61 +148,66 @@ AppTablas/
 
 ### 📈 Visualización Inteligente
 - ✅ **Gráficos interactivos** que se actualizan automáticamente
-- ✅ **8 tipos de gráficos**: Dispersión, Línea, Barras, Área, Pastel, Combinado, Radar, Treemap
-- ✅ **Visualización automática** de la relación entre características seleccionadas y variable objetivo
-- ✅ **Visualización de resultados** del modelo entrenado (Real vs Predicho)
-- ✅ **Learning Curves**: Gráfico automático de curvas de aprendizaje para detectar overfitting/underfitting
-- ✅ **Gráfico de residuos**: Validación de supuestos de regresión (normalidad, homocedasticidad)
-- ✅ **Descarga de gráficos** como imagen PNG
+- ✅ **3 gráficos principales**:
+  - **Datos antes del entrenamiento**: Visualización de la relación entre características y variable objetivo
+  - **Real vs Predicho**: Comparación de valores reales vs predicciones del modelo
+  - **Learning Curves**: Curvas de aprendizaje para detectar overfitting/underfitting
+- ✅ **8 tipos de visualización**: Dispersión, Línea, Barras, Área, Pastel, Combinado, Radar, Treemap
+- ✅ **Paneles redimensionables**: Ajusta el tamaño de los paneles según tus necesidades
+- ✅ **Estadísticas descriptivas**: Panel con estadísticas post-procesamiento
 
 ### 🤖 Machine Learning
-- ✅ **8 algoritmos disponibles**:
-  - Regresión Lineal Simple
-  - Regresión Lineal Múltiple
-  - Ridge Regression
-  - Lasso Regression
-  - Random Forest
-  - Gradient Boosting
-  - **XGBoost** ⭐ (Recomendado - mejor rendimiento)
-  - Decision Tree
+- ✅ **2 algoritmos principales**:
+  - **Regresión Lineal Simple**: Selecciona automáticamente la mejor característica y entrena un modelo simple (y = a + b*x)
+  - **Regresión Lineal Múltiple**: Usa múltiples características seleccionadas (y = a + b₁*x₁ + b₂*x₂ + ...)
 - ✅ **Entrenamiento con métricas completas**:
   - R² Score (Train y Test)
   - RMSE (Train y Test)
   - MAE (Train y Test)
   - MAPE (Mean Absolute Percentage Error)
   - Análisis de overfitting (diferencia Train vs Test)
-  - Cross-Validation (opcional)
-  - Feature Importance (para modelos basados en árboles)
+  - Learning Curves automáticas
 - ✅ **Mejoras automáticas aplicadas**:
   - Eliminación de multicolinealidad (correlación > 0.95)
   - Selección automática de características (SelectKBest)
-  - Variables derivadas (multiplicaciones, divisiones, cuadrados, ratios)
-  - Transformaciones logarítmicas (para variables sesgadas)
-  - Características polinomiales (opcional, para modelos lineales)
-- ✅ **Learning Curves**: Visualización automática de curvas de aprendizaje
-- ✅ **Predicción de nuevos valores**: Panel interactivo para hacer predicciones con modelos entrenados
+    - **Regresión Lineal Simple**: Selecciona solo 1 característica (la mejor)
+    - **Regresión Lineal Múltiple**: Selecciona las mejores características
+  - Normalización opcional (StandardScaler)
+- ✅ **Predicción individual**: Panel interactivo para hacer predicciones con modelos entrenados
+  - Selección de campos a modificar
+  - Valores por defecto inteligentes basados en correlaciones
+  - Sugerencias automáticas basadas en correlaciones entre variables
 - ✅ **Guardado en SQLite** para persistencia
-- ✅ **Visualización automática** de datos antes del entrenamiento
+- ✅ **Validación robusta**: Verificación de variabilidad de datos, escalado correcto y coeficientes no nulos
 
 ## 🎨 Interfaz
 
-### Layout (70% / 30%)
-- **Izquierda (70%)**:
-  - **Arriba**: Tabla de datos editable
-  - **Abajo**: Gráfico interactivo
-- **Derecha (30%)**:
-  - **Panel continuo** con todos los ajustes:
-    1. Selección de Variables (Y objetivo, X características, algoritmo, entrenar)
-    2. Configuración de Visualización (tipo de gráfico)
+### Layout con Paneles Redimensionables
+- **Izquierda (2 paneles verticales redimensionables)**:
+  - **Panel Superior**: Tabla de datos editable con estadísticas descriptivas
+  - **Panel Inferior**: Gráficos interactivos (3 gráficos principales)
+- **Derecha (Panel fijo)**:
+  - **Panel de Controles ML**:
+    1. Selección de Variables (Y objetivo, X características)
+    2. Selección de Algoritmo (Regresión Lineal Simple o Múltiple)
+    3. Configuración de entrenamiento (tamaño de test, normalización)
+    4. Botón de entrenamiento
+    5. Métricas del modelo entrenado
+    6. Panel de predicción individual
 
 ### Flujo de Trabajo
-1. **Cargar datos** → Preprocesamiento automático (duplicados, valores faltantes, outliers, variables derivadas)
-2. **Seleccionar variables** → Variable objetivo y características
-3. **Visualizar relación** → Gráfico se actualiza automáticamente
-4. **Configurar modelo** → Elegir algoritmo, división train/test, opciones avanzadas
-5. **Entrenar** → Ver métricas, learning curves, feature importance
-6. **Visualizar resultados** → Gráfico cambia a "Real vs Predicho" o "Learning Curves"
-7. **Hacer predicciones** → Usar el panel de predicción con nuevos valores
+1. **Cargar datos** → Preprocesamiento automático (duplicados, valores faltantes, outliers)
+2. **Seleccionar variables** → Variable objetivo y características (las características aparecen desmarcadas por defecto)
+3. **Visualizar relación** → Gráfico de datos antes del entrenamiento se actualiza automáticamente
+4. **Configurar modelo** → Elegir algoritmo (Simple o Múltiple), tamaño de test, normalización
+5. **Entrenar** → Ver métricas, learning curves automáticas
+6. **Visualizar resultados** → 
+   - Gráfico "Real vs Predicho" muestra la calidad de las predicciones
+   - Gráfico "Learning Curves" muestra el aprendizaje del modelo
+7. **Hacer predicciones** → 
+   - Seleccionar campos a modificar
+   - Ingresar valores (con sugerencias inteligentes basadas en correlaciones)
+   - Ver predicción del modelo
 
 ## 🔧 Comandos Útiles
 
@@ -238,10 +246,11 @@ npm install
 
 ## 🔧 Tecnologías
 
-- **Backend**: FastAPI, pandas, scikit-learn, XGBoost, scipy, SQLite
+- **Backend**: FastAPI, pandas, scikit-learn, SQLite
 - **Frontend**: React, Vite, Recharts, Axios
 - **Base de Datos**: SQLite3 para persistencia de modelos
-- **ML Libraries**: scikit-learn, XGBoost, scipy (Shapiro-Wilk test)
+- **ML Libraries**: scikit-learn (LinearRegression, SelectKBest, StandardScaler)
+- **UI/UX**: Paneles redimensionables, gráficos interactivos, diseño responsive
 
 ## 📝 API Endpoints
 
