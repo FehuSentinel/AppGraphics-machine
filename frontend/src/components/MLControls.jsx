@@ -26,8 +26,8 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           yAxis: columns[columns.length - 1]
         })
       }
-      // Siempre usar Regresión Lineal Simple
-      if (!mlState.algorithm || mlState.algorithm !== "Regresión Lineal Simple") {
+      // Inicializar algoritmo si no existe
+      if (!mlState.algorithm) {
         onMlStateUpdate({ algorithm: "Regresión Lineal Simple" })
       }
     }
@@ -86,8 +86,15 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           features: features
         })
         
-        // Siempre usar Regresión Lineal Simple
-        const algorithm = "Regresión Lineal Simple"
+        // Usar el algoritmo seleccionado por el usuario
+        const algorithm = mlState.algorithm || "Regresión Lineal Simple"
+        
+        // Ajustar parámetros según el algoritmo
+        // Para Regresión Lineal Simple: auto_feature_selection selecciona SOLO 1 feature
+        // Para Regresión Lineal Múltiple: auto_feature_selection selecciona las mejores features (puede ser más de 1)
+        const autoFeatureSelection = true
+        const removeMulticollinearity = true
+        const usePolynomialFeatures = false
         
         const result = await trainModel({
           session_id: sessionId,
@@ -97,9 +104,9 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
           test_size: mlState.testSize || 0.2,
           random_state: 42,
           normalize: mlState.normalizeData || false,
-          auto_feature_selection: true,  // Selección automática: para Regresión Lineal Simple selecciona SOLO la mejor feature
-          remove_multicollinearity: true,  // Eliminar features altamente correlacionadas
-          use_polynomial_features: false  // Features polinomiales desactivadas
+          auto_feature_selection: autoFeatureSelection,
+          remove_multicollinearity: removeMulticollinearity,
+          use_polynomial_features: usePolynomialFeatures
         })
       
       console.log('📥 Respuesta recibida:', result)
@@ -288,21 +295,23 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
             )}
           </div>
 
-              <div className="form-group">
-                <label>Algoritmo:</label>
-                <select 
-                  value={mlState.algorithm || "Regresión Lineal Simple"} 
-                  onChange={(e) => onMlStateUpdate({ algorithm: e.target.value })}
-                  className="form-select"
-                  disabled
-                  style={{ background: '#f0f0f0', cursor: 'not-allowed' }}
-                >
-                  <option value="Regresión Lineal Simple">Regresión Lineal Simple</option>
-                </select>
-                <small style={{ color: '#666', fontSize: '10px' }}>
-                  💡 Usando Regresión Lineal Simple (seleccionará automáticamente la mejor característica)
-                </small>
-              </div>
+                <div className="form-group">
+                  <label>Algoritmo:</label>
+                  <select 
+                    value={mlState.algorithm || "Regresión Lineal Simple"} 
+                    onChange={(e) => onMlStateUpdate({ algorithm: e.target.value })}
+                    className="form-select"
+                  >
+                    <option value="Regresión Lineal Simple">Regresión Lineal Simple</option>
+                    <option value="Regresión Lineal Múltiple">Regresión Lineal Múltiple</option>
+                  </select>
+                  <small style={{ color: '#666', fontSize: '10px' }}>
+                    {mlState.algorithm === "Regresión Lineal Simple" 
+                      ? "💡 Regresión Lineal Simple: Usa UNA sola característica (seleccionada automáticamente)"
+                      : "💡 Regresión Lineal Múltiple: Usa MÚLTIPLES características seleccionadas"
+                    }
+                  </small>
+                </div>
 
           <div className="form-group">
             <label>División Train/Test (% Test):</label>
@@ -344,12 +353,24 @@ const MLControls = ({ sessionId, data, columns, mlState, onMlStateUpdate }) => {
             border: '1px solid #81C784'
           }}>
             <p style={{ margin: '0', fontSize: '11px', color: '#2E7D32', fontWeight: '600' }}>
-              💡 Información sobre Regresión Lineal Simple:
+              💡 Información sobre {mlState.algorithm || "Regresión Lineal Simple"}:
             </p>
             <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px', fontSize: '10px', color: '#558B2F' }}>
-              <li>Selecciona automáticamente la mejor característica de las que seleccionaste</li>
-              <li>Entrena un modelo simple y rápido</li>
-              <li>Ideal para entender la relación entre una característica y la variable objetivo</li>
+              {mlState.algorithm === "Regresión Lineal Simple" ? (
+                <>
+                  <li>Selecciona automáticamente la mejor característica de las que seleccionaste</li>
+                  <li>Entrena un modelo simple y rápido</li>
+                  <li>Ideal para entender la relación entre una característica y la variable objetivo</li>
+                  <li>Fórmula: y = a + b*x (donde x es la mejor característica)</li>
+                </>
+              ) : (
+                <>
+                  <li>Usa todas las características seleccionadas (después de eliminar multicolinealidad)</li>
+                  <li>Ideal cuando múltiples variables influyen en el objetivo</li>
+                  <li>Fórmula: y = a + b₁*x₁ + b₂*x₂ + ... + bₙ*xₙ</li>
+                  <li>Elimina automáticamente características altamente correlacionadas</li>
+                </>
+              )}
             </ul>
           </div>
 

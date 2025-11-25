@@ -11,7 +11,6 @@ const DataTable = ({ sessionId, data, columns, onDataUpdate, onDataLoaded }) => 
   // Cargar estadísticas cuando cambian los datos
   useEffect(() => {
     if (sessionId && data.length > 0) {
-      // Esperar un poco para asegurar que el backend procesó los datos
       const timer = setTimeout(() => {
         loadStatistics()
       }, 500)
@@ -25,7 +24,6 @@ const DataTable = ({ sessionId, data, columns, onDataUpdate, onDataLoaded }) => 
       const result = await getStatistics(sessionId)
       setStatistics(result.statistics)
     } catch (error) {
-      // No mostrar error si es 404, puede ser que la sesión aún no esté lista
       if (error.response?.status !== 404) {
         console.error('Error al cargar estadísticas:', error)
       }

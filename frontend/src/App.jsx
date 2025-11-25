@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import DataTable from './components/DataTable'
 import MLControls from './components/MLControls'
 import GraphPanel from './components/GraphPanel'
+import ResizablePanels from './components/ResizablePanels'
 import './App.css'
 
 function App() {
@@ -57,26 +58,27 @@ function App() {
         {filename && <span className="file-info">{filename}</span>}
       </header>
       <div className="app-grid">
-        {/* Izquierda: Tabla (arriba) */}
-        <div className="grid-cell table-cell">
-          <DataTable
-            sessionId={sessionId}
-            data={data}
-            columns={columns}
-            onDataUpdate={handleDataUpdate}
-            onDataLoaded={handleDataLoaded}
-          />
-        </div>
-        
-        {/* Izquierda: Gráfico (abajo) */}
-        <div className="grid-cell graph-cell">
-          <GraphPanel
-            sessionId={sessionId}
-            data={data}
-            columns={columns}
-            mlState={mlState}
-            onMlStateUpdate={handleMlStateUpdate}
-          />
+        {/* Izquierda: 2 Paneles redimensionables */}
+        <div className="left-panels">
+          <ResizablePanels direction="vertical">
+            {/* Panel 1: Tabla de datos (incluye estadísticas) */}
+            <DataTable
+              sessionId={sessionId}
+              data={data}
+              columns={columns}
+              onDataUpdate={handleDataUpdate}
+              onDataLoaded={handleDataLoaded}
+            />
+            
+            {/* Panel 2: Visualización de Datos (Gráficos) */}
+            <GraphPanel
+              sessionId={sessionId}
+              data={data}
+              columns={columns}
+              mlState={mlState}
+              onMlStateUpdate={handleMlStateUpdate}
+            />
+          </ResizablePanels>
         </div>
         
         {/* Derecha: Ajustes Continuos */}

@@ -36,10 +36,16 @@
   flex: 1;
   display: grid;
   grid-template-columns: 70% 30%;
-  grid-template-rows: 1fr 1fr;
   gap: 1px;
   overflow: hidden;
   background-color: #E1E8ED;
+}
+
+.left-panels {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
 .grid-cell {
