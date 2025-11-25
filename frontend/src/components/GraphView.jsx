@@ -61,22 +61,39 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
 
   // Datos para visualización del modelo (solo si hay modelo entrenado)
   const modelChartData = useMemo(() => {
-    if (!modelResults || !modelResults.predictions) return null
+    if (!modelResults || !modelResults.predictions) {
+      console.log('⚠️ modelChartData: No hay modelResults o predictions')
+      return null
+    }
     
-    const predictions = modelResults.predictions.y_test.map((actual, idx) => {
-      const predicted = modelResults.predictions.y_test_pred[idx]
-      const error = Math.abs(actual - predicted)
-      const errorPercent = actual !== 0 ? ((error / Math.abs(actual)) * 100).toFixed(2) : '0.00'
-      return {
-        x: actual,
-        y: predicted,
-        error: error,
-        errorPercent: errorPercent,
-        name: `Real: ${actual.toFixed(2)}, Predicho: ${predicted.toFixed(2)}, Error: ${error.toFixed(2)} (${errorPercent}%)`
-      }
-    })
+    if (!modelResults.predictions.y_test || !modelResults.predictions.y_test_pred) {
+      console.log('⚠️ modelChartData: Faltan y_test o y_test_pred', {
+        hasYTest: !!modelResults.predictions.y_test,
+        hasYTestPred: !!modelResults.predictions.y_test_pred
+      })
+      return null
+    }
     
-    return { predictions }
+    try {
+      const predictions = modelResults.predictions.y_test.map((actual, idx) => {
+        const predicted = modelResults.predictions.y_test_pred[idx]
+        const error = Math.abs(actual - predicted)
+        const errorPercent = actual !== 0 ? ((error / Math.abs(actual)) * 100).toFixed(2) : '0.00'
+        return {
+          x: actual,
+          y: predicted,
+          error: error,
+          errorPercent: errorPercent,
+          name: `Real: ${actual.toFixed(2)}, Predicho: ${predicted.toFixed(2)}, Error: ${error.toFixed(2)} (${errorPercent}%)`
+        }
+      })
+      
+      console.log('✅ modelChartData generado:', predictions.length, 'puntos')
+      return { predictions }
+    } catch (error) {
+      console.error('❌ Error generando modelChartData:', error)
+      return null
+    }
   }, [modelResults])
 
   const modelData = useMemo(() => {
@@ -163,6 +180,20 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
   // Verificar si hay datos para mostrar
   const hasDataVisualization = Array.isArray(dataVisualizationChart) && dataVisualizationChart.length > 0
   const hasModelVisualization = modelChartData && modelChartData.predictions && modelChartData.predictions.length > 0
+  
+  // Debug: Log para verificar qué se está mostrando
+  useEffect(() => {
+    console.log('🔍 GraphView Debug:', {
+      hasDataVisualization,
+      hasModelVisualization,
+      modelResults: !!modelResults,
+      hasPredictions: !!(modelResults?.predictions),
+      predictionsLength: modelResults?.predictions?.y_test?.length || 0,
+      modelChartData: !!modelChartData,
+      learningCurveData: !!learningCurveData,
+      learningCurveLength: learningCurveData?.length || 0
+    })
+  }, [hasDataVisualization, hasModelVisualization, modelResults, modelChartData, learningCurveData])
   
   if (!hasDataVisualization && !hasModelVisualization) {
     const features = selectedFeatures || []
@@ -408,14 +439,13 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
       )}
 
       {/* Gráficos DESPUÉS del entrenamiento (si hay modelo entrenado) */}
-      {hasModelVisualization && (
+      {modelResults && modelResults.predictions && modelResults.predictions.y_test && modelResults.predictions.y_test.length > 0 && (
         <>
           {/* Gráfico 2: Real vs Predicho (Resultados del Modelo) */}
-          {modelResults && modelResults.predictions && (
-            <div style={{ width: '100%', minHeight: '450px', maxHeight: '500px', border: '1px solid #E1E8ED', borderRadius: '8px', padding: '20px', background: 'white', marginBottom: '30px' }}>
-              <h4 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#2C3E50' }}>📈 Resultados del Modelo: Real vs Predicho</h4>
-              <div style={{ height: '400px', width: '100%', marginTop: '10px' }}>
-                {modelChartData && modelChartData.predictions && graphType === 'scatter' && (
+          <div style={{ width: '100%', minHeight: '450px', maxHeight: '500px', border: '1px solid #E1E8ED', borderRadius: '8px', padding: '20px', background: 'white', marginBottom: '30px' }}>
+            <h4 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#2C3E50' }}>📈 Resultados del Modelo: Real vs Predicho</h4>
+            <div style={{ height: '400px', width: '100%', marginTop: '10px' }}>
+              {modelChartData && modelChartData.predictions && modelChartData.predictions.length > 0 && graphType === 'scatter' && (
                   <>
                     <ResponsiveContainer key={`${graphKey}-model`} width="100%" height="100%">
                       <ScatterChart data={modelChartData.predictions}>
@@ -490,8 +520,16 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
                   </>
                 )}
                 
+                {/* Si no hay modelChartData pero hay modelResults, mostrar mensaje */}
+                {!modelChartData && (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                    <p>⚠️ No se pudieron generar los datos del gráfico.</p>
+                    <p style={{ fontSize: '11px' }}>Verifique que el modelo tenga predicciones válidas.</p>
+                  </div>
+                )}
+                
                 {/* Si el tipo de gráfico no es scatter, mostrar el gráfico correspondiente */}
-                {modelChartData && modelChartData.predictions && graphType !== 'scatter' && (
+                {modelChartData && modelChartData.predictions && modelChartData.predictions.length > 0 && graphType !== 'scatter' && (
                   <>
                     {graphType === 'line' && (
                       <ResponsiveContainer key={`${graphKey}-model-line`} width="100%" height="100%">
@@ -592,7 +630,7 @@ const GraphView = ({ data, columns, graphType, xAxis, yAxis, targetColumn, selec
           )}
 
           {/* Gráfico 3: Learning Curves (Curvas de Aprendizaje) */}
-          {learningCurveData && !mlState?.showResiduals && (
+          {modelResults && modelResults.learning_curve && learningCurveData && learningCurveData.length > 0 && !mlState?.showResiduals && (
             <div style={{ width: '100%', minHeight: '450px', maxHeight: '500px', border: '1px solid #E1E8ED', borderRadius: '8px', padding: '20px', background: 'white', marginBottom: '20px' }}>
               <h4 style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#2C3E50' }}>📈 Learning Curves (Curvas de Aprendizaje)</h4>
               <div style={{ height: '400px', width: '100%', marginTop: '10px' }}>

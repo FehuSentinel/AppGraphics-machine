@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { predictWithModel, predictBatchWithModel, getModelDetails } from '../services/api'
+import { predictWithModel, getModelDetails } from '../services/api'
 
 // Componente para panel de predicción mejorado
 const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, onPrediction }) => {
@@ -7,11 +7,6 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
   const [prediction, setPrediction] = useState(null)
   const [loading, setLoading] = useState(false)
   const [statistics, setStatistics] = useState({})
-  const [exampleRows, setExampleRows] = useState([])
-  const [showMassPrediction, setShowMassPrediction] = useState(false)
-  const [massPredictionFile, setMassPredictionFile] = useState(null)
-  const [massPredictionResults, setMassPredictionResults] = useState(null)
-  const [selectedExample, setSelectedExample] = useState(null)
   const [selectedFeaturesToEdit, setSelectedFeaturesToEdit] = useState(new Set()) // Features seleccionadas para editar
   const [requiredFeatures, setRequiredFeatures] = useState(features) // Features requeridas por el modelo
 
@@ -46,11 +41,10 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
     fetchModelFeatures()
   }, [modelId, features])
 
-  // Calcular estadísticas y ejemplos
+  // Calcular estadísticas
   useEffect(() => {
     if (data && data.length > 0 && requiredFeatures.length > 0) {
       const stats = {}
-      const examples = []
       
       requiredFeatures.forEach(feature => {
         const values = data
@@ -70,24 +64,7 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
         }
       })
 
-      // Obtener 3-5 ejemplos reales del dataset
-      const sampleSize = Math.min(5, data.length)
-      const step = Math.floor(data.length / sampleSize)
-      for (let i = 0; i < sampleSize; i++) {
-        const idx = i * step
-        if (idx < data.length) {
-          const row = data[idx]
-          // Verificar que tenga todos los features necesarios
-          // Verificar que tenga todas las features necesarias (pueden ser numéricas o categóricas)
-          const hasAllFeatures = requiredFeatures.every(f => row.hasOwnProperty(f))
-          if (hasAllFeatures) {
-            examples.push(row)
-          }
-        }
-      }
-      
       setStatistics(stats)
-      setExampleRows(examples)
       
       // No inicializar con valores predefinidos - dejar vacío para que el usuario elija
       setInputValues({})
@@ -260,15 +237,6 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
     }))
   }
 
-  const useExample = (example) => {
-    const values = {}
-    features.forEach(feature => {
-      const val = example[feature]
-      values[feature] = typeof val === 'number' ? val.toFixed(2) : parseFloat(val).toFixed(2)
-    })
-    setInputValues(values)
-    setSelectedExample(example)
-  }
 
   const setToStat = (feature, statType) => {
     if (statistics[feature]) {
@@ -309,88 +277,7 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
 
   return (
     <div>
-      {/* Tabs: Predicción Individual vs Masiva */}
-      <div style={{ 
-        display: 'flex', 
-        gap: '5px', 
-        marginBottom: '15px',
-        borderBottom: '2px solid #E1E8ED'
-      }}>
-        <button
-          onClick={() => setShowMassPrediction(false)}
-          style={{
-            padding: '8px 15px',
-            background: !showMassPrediction ? '#27AE60' : 'transparent',
-            color: !showMassPrediction ? 'white' : '#666',
-            border: 'none',
-            borderBottom: !showMassPrediction ? '3px solid #229954' : '3px solid transparent',
-            cursor: 'pointer',
-            fontWeight: !showMassPrediction ? '600' : '400',
-            fontSize: '12px',
-            borderRadius: '4px 4px 0 0'
-          }}
-        >
-          🔮 Predicción Individual
-        </button>
-        <button
-          onClick={() => setShowMassPrediction(true)}
-          style={{
-            padding: '8px 15px',
-            background: showMassPrediction ? '#27AE60' : 'transparent',
-            color: showMassPrediction ? 'white' : '#666',
-            border: 'none',
-            borderBottom: showMassPrediction ? '3px solid #229954' : '3px solid transparent',
-            cursor: 'pointer',
-            fontWeight: showMassPrediction ? '600' : '400',
-            fontSize: '12px',
-            borderRadius: '4px 4px 0 0'
-          }}
-        >
-          📊 Predicción Masiva (CSV/Excel)
-        </button>
-      </div>
-
-      {!showMassPrediction ? (
-        <>
-          {/* Plantillas con Ejemplos Reales */}
-          {exampleRows.length > 0 && (
-            <div style={{
-              marginBottom: '15px',
-              padding: '10px',
-              background: '#EBF5FB',
-              borderRadius: '6px',
-              border: '1px solid #D6EAF8'
-            }}>
-              <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: '600' }}>
-                📋 Ejemplos Reales del Dataset:
-              </p>
-              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                {exampleRows.slice(0, 5).map((example, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => useExample(example)}
-                    style={{
-                      padding: '5px 10px',
-                      background: selectedExample === example ? '#3498DB' : '#D6EAF8',
-                      color: selectedExample === example ? 'white' : '#2C3E50',
-                      border: '1px solid #85C1E2',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '10px',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    Ejemplo {idx + 1}
-                  </button>
-                ))}
-              </div>
-              <small style={{ fontSize: '9px', color: '#666', display: 'block', marginTop: '5px' }}>
-                💡 Haz clic en un ejemplo para copiar sus valores
-              </small>
-            </div>
-          )}
-
-          {/* Seleccionar qué campos modificar */}
+      {/* Seleccionar qué campos modificar */}
           <div style={{ 
             marginBottom: '15px', 
             padding: '10px', 
@@ -736,99 +623,6 @@ const PredictionPanel = ({ modelId, features, targetColumn, data, correlations, 
               </p>
             </div>
           )}
-        </>
-      ) : (
-        <div>
-          <p style={{ fontSize: '11px', color: '#666', marginBottom: '10px' }}>
-            Carga un archivo CSV o Excel con las mismas columnas que las características del modelo. 
-            El archivo debe tener las columnas: <strong>{requiredFeatures.join(', ')}</strong>
-          </p>
-          <input
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            onChange={(e) => setMassPredictionFile(e.target.files[0])}
-            style={{ marginBottom: '10px', fontSize: '11px' }}
-          />
-          <button
-            onClick={async () => {
-              if (!massPredictionFile) {
-                alert('Por favor selecciona un archivo')
-                return
-              }
-              
-              setLoading(true)
-              try {
-                const result = await predictBatchWithModel(modelId, massPredictionFile)
-                setMassPredictionResults(result)
-                
-                // Crear CSV con resultados
-                const csvContent = [
-                  // Encabezados
-                  [...features, `prediccion_${targetColumn}`].join(','),
-                  // Datos
-                  ...result.predictions.map(row => {
-                    const values = features.map(f => row[f] || '')
-                    values.push(row[`prediccion_${targetColumn}`] || '')
-                    return values.join(',')
-                  })
-                ].join('\n')
-                
-                // Descargar CSV
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-                const link = document.createElement('a')
-                const url = URL.createObjectURL(blob)
-                link.setAttribute('href', url)
-                link.setAttribute('download', `predicciones_${new Date().toISOString().split('T')[0]}.csv`)
-                link.style.visibility = 'hidden'
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-                
-                alert(`✅ ${result.valid_rows} predicciones completadas. Archivo descargado.`)
-              } catch (error) {
-                alert('Error al hacer predicción masiva: ' + (error.response?.data?.detail || error.message))
-                setMassPredictionResults(null)
-              } finally {
-                setLoading(false)
-              }
-            }}
-            disabled={!massPredictionFile || loading}
-            style={{
-              width: '100%',
-              padding: '10px',
-              background: (massPredictionFile && !loading) ? '#27AE60' : '#95A5A6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: (massPredictionFile && !loading) ? 'pointer' : 'not-allowed',
-              fontSize: '12px',
-              fontWeight: '600'
-            }}
-          >
-            {loading ? '⏳ Procesando...' : '📊 Predecir Archivo Completo'}
-          </button>
-          {massPredictionResults && (
-            <div style={{
-              marginTop: '15px',
-              padding: '10px',
-              background: '#E8F5E9',
-              borderRadius: '6px',
-              fontSize: '11px'
-            }}>
-              <p style={{ margin: '0 0 5px 0', fontWeight: '600' }}>
-                ✅ Predicción Masiva Completada
-              </p>
-              <p style={{ margin: '0' }}>
-                Total filas: {massPredictionResults.total_rows} | 
-                Válidas: {massPredictionResults.valid_rows}
-              </p>
-              <p style={{ margin: '5px 0 0 0', fontSize: '10px', color: '#666' }}>
-                El archivo CSV con las predicciones se ha descargado automáticamente
-              </p>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
